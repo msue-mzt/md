@@ -1,0 +1,1553 @@
+<!DOCTYPE html>
+<html lang="mn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Markdown Editor 1.4</title>
+<script>
+// Өдөр/шөнийн горимыг хуудас зурагдахаас өмнө тогтооно (анивчихгүй)
+(function () {
+  var t = null;
+  try { t = localStorage.getItem('mdeditor-theme'); } catch (e) {}
+  if (t !== 'light' && t !== 'dark') {
+    t = (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+  }
+  document.documentElement.setAttribute('data-theme', t);
+})();
+</script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+[hidden] { display: none !important; }
+
+/* ===== Өнгөний систем (өдрийн горим) ===== */
+:root {
+  color-scheme: light;
+  --bg: #edf2fb;
+  --surface: #ffffff;
+  --surface2: #f6f8fd;
+  --border: #dde4f2;
+  --border2: #c5d0e6;
+  --ink: #14213d;
+  --ink2: #4a5878;
+  --ink3: #8d9ab5;
+
+  --navy: #16285a;
+  --navy2: #22397a;
+
+  --blue: #2f5bea;   --blue-ink: #2248c9;   --blue-soft: #e6edff;
+  --violet: #7b5cf0; --violet-ink: #5d3fd6; --violet-soft: #efeafe;
+  --teal: #0f9d8a;   --teal-ink: #0b7d6e;   --teal-soft: #dcf5f1;
+  --rose: #d8386b;   --rose-ink: #b8214f;   --rose-soft: #fde6ee;
+  --ochre: #e3931b;  --ochre-ink: #a96200;  --ochre-soft: #fdf0d8;
+
+  --stripe: linear-gradient(90deg,
+      var(--blue) 0 20%, var(--violet) 20% 40%, var(--teal) 40% 60%,
+      var(--rose) 60% 80%, var(--ochre) 80% 100%);
+
+  --shadow: 0 1px 2px rgba(20,33,61,.06), 0 10px 26px -14px rgba(22,40,90,.28);
+  --font-ui: 'Manrope', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+  --font-serif: 'Source Serif 4', Georgia, serif;
+  --radius: 14px;
+  --radius-sm: 9px;
+}
+
+/* ===== Шөнийн горим ===== */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0c1224;
+  --surface: #131b33;
+  --surface2: #19223f;
+  --border: #26314f;
+  --border2: #36436a;
+  --ink: #e7ecf8;
+  --ink2: #a8b3cf;
+  --ink3: #6c7899;
+
+  --navy: #0a1330;
+  --navy2: #16254f;
+
+  --blue: #6c8dff;   --blue-ink: #95adff;   --blue-soft: #1c2a55;
+  --violet: #a38cff; --violet-ink: #bfb0ff; --violet-soft: #2a2152;
+  --teal: #2fc9b2;   --teal-ink: #62dcc9;   --teal-soft: #11332f;
+  --rose: #ff6b98;   --rose-ink: #ff94b4;   --rose-soft: #3a1726;
+  --ochre: #ffb347;  --ochre-ink: #ffc877;  --ochre-soft: #36260c;
+
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 30px -16px rgba(0,0,0,.7);
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+}
+body { transition: background-color .2s, color .2s; }
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 14px;
+  gap: 12px;
+}
+
+/* ===== Дээд самбар ===== */
+.appbar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px 18px;
+  background: var(--navy);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  color: #fff;
+  overflow: hidden;
+}
+.appbar::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 5px;
+  background: var(--stripe);
+}
+
+.brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.brand-mark {
+  width: 40px; height: 40px;
+  display: grid; place-items: center;
+  border-radius: 11px;
+  background: var(--ochre);
+  color: var(--navy);
+  font-size: 22px;
+  flex-shrink: 0;
+}
+.brand-text { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+.brand-title { font-size: 17px; font-weight: 700; letter-spacing: .005em; }
+.brand-sub { font-size: 12px; color: rgba(255,255,255,.72); }
+
+.appbar-right { display: flex; align-items: center; gap: 10px; min-width: 0; }
+
+.filechip {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 7px 14px;
+  background: var(--navy2);
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  max-width: 46vw;
+  min-width: 0;
+  white-space: nowrap;
+}
+.filechip i { color: var(--ochre); }
+.filechip #filename { overflow: hidden; text-overflow: ellipsis; }
+.dirty-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ochre); flex-shrink: 0; display: none; }
+.filechip.dirty .dirty-dot { display: inline-block; }
+
+.theme-btn {
+  width: 38px; height: 38px;
+  display: grid; place-items: center;
+  flex-shrink: 0;
+  border-radius: 11px;
+  border: 1px solid rgba(255,255,255,.16);
+  background: var(--navy2);
+  color: var(--ochre);
+  font-size: 19px;
+  cursor: pointer;
+  transition: background .14s, transform .05s;
+}
+.theme-btn:hover { background: rgba(255,255,255,.16); }
+.theme-btn:active { transform: translateY(1px); }
+.theme-btn:focus-visible { outline: 2px solid var(--ochre); outline-offset: 2px; }
+
+/* ===== Хэрэгслийн мөр ===== */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  flex-wrap: wrap;
+}
+
+.tgroup {
+  --c: var(--blue); --c-ink: var(--blue-ink); --c-soft: var(--blue-soft);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: var(--c-soft);
+  border-radius: 11px;
+}
+.tgroup.g-head   { --c: var(--violet); --c-ink: var(--violet-ink); --c-soft: var(--violet-soft); }
+.tgroup.g-block  { --c: var(--teal);   --c-ink: var(--teal-ink);   --c-soft: var(--teal-soft); }
+.tgroup.g-insert { --c: var(--rose);   --c-ink: var(--rose-ink);   --c-soft: var(--rose-soft); }
+.tgroup.g-math   { --c: var(--ochre);  --c-ink: var(--ochre-ink);  --c-soft: var(--ochre-soft); }
+
+.tgroup button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--c-ink);
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .14s, color .14s, transform .05s;
+}
+.tgroup button:hover { background: var(--c); color: #fff; }
+.tgroup button:active { transform: translateY(1px); }
+.tgroup.g-math button { font-size: 16px; }
+
+.toolbar button:focus-visible { outline: 2px solid var(--c, var(--blue)); outline-offset: 2px; }
+.toolbar .spacer { flex: 1; min-width: 8px; }
+
+.viewseg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+}
+.viewseg button {
+  min-width: 36px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink3);
+  font-size: 15px;
+  cursor: pointer;
+  transition: background .14s, color .14s;
+}
+.viewseg button:hover { color: var(--navy); background: var(--border); }
+.viewseg button.active { background: var(--navy); color: #fff; }
+[data-theme="dark"] .viewseg button:hover { color: var(--ink); }
+[data-theme="dark"] .viewseg button.active { background: var(--blue); }
+
+/* ===== Бичих ба харах цонх ===== */
+.editor-area { display: flex; gap: 0; flex: 1; min-height: 0; }
+
+.pane {
+  --c: var(--ochre); --c-ink: var(--ochre-ink); --c-soft: var(--ochre-soft);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: 4px solid var(--c);
+  border-radius: var(--radius);
+  overflow: hidden;
+  min-width: 0;
+  box-shadow: var(--shadow);
+}
+#pane-preview { --c: var(--teal); --c-ink: var(--teal-ink); --c-soft: var(--teal-soft); }
+.pane.is-hidden { display: none; }
+
+/* Хоёр цонхны хоорондох чирэх зураас */
+.divider {
+  flex: 0 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+.divider::before {
+  content: "";
+  width: 4px;
+  height: 48px;
+  border-radius: 4px;
+  background: var(--border2);
+  transition: background .14s, height .14s;
+}
+.divider:hover::before,
+.divider.dragging::before,
+.divider:focus-visible::before { background: var(--blue); height: 96px; }
+.divider.is-hidden { display: none; }
+body.resizing { cursor: col-resize; user-select: none; }
+body.resizing .pane { pointer-events: none; }
+
+.pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  padding: 8px 10px 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--c-soft);
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--c-ink);
+  flex-shrink: 0;
+}
+.pane-header .ph-label { display: flex; align-items: center; gap: 8px; }
+.pane-header .ph-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+.ph-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--c-ink);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .14s, color .14s, transform .05s;
+}
+.ph-btn:hover { background: var(--c); color: #fff; }
+.ph-btn:active { transform: translateY(1px); }
+.ph-btn:focus-visible { outline: 2px solid var(--c); outline-offset: 2px; }
+.ph-btn.ph-btn-main { background: var(--c); color: #fff; }
+.ph-btn.ph-btn-main:hover { background: var(--c-ink); }
+.ph-btn-pdf { --c: var(--rose); --c-ink: var(--rose-ink); background: var(--rose); color: #fff; }
+.ph-btn-pdf:hover { background: var(--rose-ink); }
+.ph-btn-close { padding: 6px 8px; background: transparent; color: var(--ink3); }
+.ph-btn-close:hover { background: var(--c); color: #fff; }
+.ph-btn-close i { font-size: 16px; }
+
+textarea {
+  flex: 1;
+  resize: none;
+  border: none;
+  outline: none;
+  padding: 20px 22px;
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  line-height: 1.7;
+  background: var(--surface);
+  color: var(--ink);
+  tab-size: 2;
+  caret-color: var(--ochre);
+}
+textarea::placeholder { color: var(--ink3); }
+textarea::selection { background: var(--ochre-soft); }
+
+.preview-scroll { flex: 1; overflow-y: auto; padding: 24px 28px; font-family: var(--font-serif); }
+
+/* ===== Харах хэсгийн хэв маяг ===== */
+.preview-scroll h1 {
+  font-family: var(--font-ui); font-size: 26px; font-weight: 800; color: var(--navy);
+  margin: 0 0 18px; padding-bottom: 12px;
+  background: var(--stripe) left bottom / 100% 4px no-repeat;
+}
+[data-theme="dark"] .preview-scroll h1 { color: var(--ink); }
+.preview-scroll h2 {
+  font-family: var(--font-ui); font-size: 19px; font-weight: 700; color: var(--blue-ink);
+  margin: 28px 0 12px; padding: 4px 0 4px 12px; border-left: 4px solid var(--blue);
+}
+.preview-scroll h3 { font-family: var(--font-ui); font-size: 15.5px; font-weight: 700; margin: 20px 0 8px; color: var(--teal-ink); }
+.preview-scroll h1, .preview-scroll h2, .preview-scroll hr { clear: both; }
+.preview-scroll .doc-head {
+  display: flex; justify-content: space-between; gap: 12px;
+  font-family: var(--font-ui); font-size: 12px; color: var(--ink2);
+  padding-bottom: 7px; margin-bottom: 20px;
+  background: var(--stripe) left bottom / 100% 2px no-repeat;
+}
+.preview-scroll .doc-head b { color: var(--navy); font-weight: 800; }
+[data-theme="dark"] .preview-scroll .doc-head b { color: var(--ink); }
+.preview-scroll p { margin: 0 0 13px; line-height: 1.8; }
+.preview-scroll ul, .preview-scroll ol { margin: 0 0 13px; padding-left: 24px; }
+.preview-scroll li { margin: 5px 0; line-height: 1.7; }
+.preview-scroll ul li::marker { color: var(--teal); }
+.preview-scroll ol li::marker { color: var(--violet); font-family: var(--font-ui); font-weight: 700; }
+.preview-scroll code { font-family: var(--font-mono); font-size: 12.5px; background: var(--rose-soft); color: var(--rose-ink); padding: 2px 6px; border-radius: 6px; }
+
+/* Кодын/жишээний блок: зөвхөн текстийнхээ хэмжээнд, мөр хоорондын зай нягт */
+.preview-scroll pre {
+  display: block;
+  width: fit-content;
+  min-width: min(220px, 100%);
+  max-width: 100%;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--violet);
+  border-radius: var(--radius-sm);
+  padding: 8px 14px;
+  overflow-x: auto;
+  margin: 0 0 14px;
+  line-height: 1.45;
+}
+.preview-scroll pre code { display: block; background: none; color: var(--ink); padding: 0; font-size: 13px; line-height: inherit; }
+
+.preview-scroll table { border-collapse: separate; border-spacing: 0; width: 100%; margin: 0 0 14px; font-family: var(--font-ui); font-size: 13.5px; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.preview-scroll th, .preview-scroll td { padding: 9px 13px; border-bottom: 1px solid var(--border); }
+.preview-scroll th { background: var(--blue); color: #fff; font-weight: 700; }
+.preview-scroll tr:last-child td { border-bottom: none; }
+.preview-scroll tr:nth-child(even) td { background: var(--blue-soft); }
+.preview-scroll blockquote { border-left: 4px solid var(--ochre); background: var(--ochre-soft); margin: 0 0 14px; padding: 3px 12px; border-radius: 0 6px 6px 0; color: var(--ink2); font-style: italic; line-height: 1.55; }
+.preview-scroll blockquote p { margin: 0 0 4px; line-height: 1.55; }
+.preview-scroll blockquote > :last-child { margin-bottom: 0; }
+.preview-scroll hr { border: none; height: 3px; background: var(--stripe); border-radius: 3px; margin: 24px 0; opacity: .8; }
+.preview-scroll a { color: var(--blue-ink); text-decoration-color: var(--blue); text-underline-offset: 3px; }
+.preview-scroll strong { font-weight: 700; color: var(--ink); }
+.preview-scroll em { font-style: italic; color: var(--violet-ink); }
+.preview-scroll del { color: var(--ink3); }
+
+/* Зураг: хэмжээ + текст ороолт (square wrap) */
+.preview-scroll img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 4px 0 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.preview-scroll img.img-left   { float: left;  margin: 4px 18px 10px 0; }
+.preview-scroll img.img-right  { float: right; margin: 4px 0 10px 18px; }
+.preview-scroll img.img-center { margin-left: auto; margin-right: auto; }
+.preview-scroll img.is-selected { outline: 3px solid var(--rose); outline-offset: 3px; }
+
+.katex-display { overflow-x: auto; overflow-y: hidden; margin: 12px 0; padding: 8px 0; }
+
+/* ===== Кодын түлхүүр үгийн өнгө (highlight.js) ===== */
+.preview-scroll .hljs-keyword,
+.preview-scroll .hljs-selector-tag     { color: var(--violet-ink); font-weight: 600; }
+.preview-scroll .hljs-type,
+.preview-scroll .hljs-built_in,
+.preview-scroll .hljs-class .hljs-title,
+.preview-scroll .hljs-title.class_     { color: var(--teal-ink); }
+.preview-scroll .hljs-title.function_,
+.preview-scroll .hljs-title            { color: var(--blue-ink); }
+.preview-scroll .hljs-string,
+.preview-scroll .hljs-char             { color: var(--ochre-ink); }
+.preview-scroll .hljs-number,
+.preview-scroll .hljs-literal          { color: var(--rose-ink); }
+.preview-scroll .hljs-meta,
+.preview-scroll .hljs-meta .hljs-keyword { color: var(--rose-ink); font-weight: 400; }
+.preview-scroll .hljs-meta .hljs-string { color: var(--ochre-ink); }
+.preview-scroll .hljs-comment,
+.preview-scroll .hljs-doctag           { color: var(--ink3); font-style: italic; }
+.preview-scroll .hljs-operator,
+.preview-scroll .hljs-punctuation      { color: var(--ink2); }
+
+/* ===== Зургийн тохиргооны самбар ===== */
+.imgpanel {
+  position: fixed;
+  z-index: 40;
+  width: 262px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: 4px solid var(--rose);
+  border-radius: var(--radius);
+  box-shadow: 0 18px 40px -16px rgba(10,18,40,.45);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  color: var(--ink);
+}
+.ip-head { display: flex; align-items: center; justify-content: space-between; font-weight: 700; color: var(--rose-ink); margin-bottom: 10px; }
+.ip-head span { display: inline-flex; align-items: center; gap: 6px; }
+.ip-x { border: none; background: transparent; color: var(--ink3); font-size: 16px; cursor: pointer; padding: 2px 4px; border-radius: 6px; }
+.ip-x:hover { background: var(--rose); color: #fff; }
+.ip-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+.ip-row label { display: flex; flex-direction: column; gap: 4px; font-weight: 600; color: var(--ink2); }
+.ip-row input {
+  width: 100%;
+  padding: 6px 9px;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  background: var(--surface2);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+.ip-row input:focus { outline: 2px solid var(--rose); outline-offset: 0; border-color: transparent; }
+.ip-quick { display: flex; gap: 4px; margin-bottom: 10px; }
+.ip-quick button, .ip-wrap button {
+  flex: 1;
+  padding: 5px 0;
+  border: none;
+  border-radius: 7px;
+  background: var(--rose-soft);
+  color: var(--rose-ink);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .14s, color .14s;
+}
+.ip-wrap button { font-size: 17px; padding: 5px 0 3px; }
+.ip-quick button:hover, .ip-wrap button:hover { background: var(--rose); color: #fff; }
+.ip-wrap button.active { background: var(--rose); color: #fff; }
+.ip-quick button:focus-visible, .ip-wrap button:focus-visible, .ip-x:focus-visible { outline: 2px solid var(--rose); outline-offset: 2px; }
+.ip-label { font-weight: 600; color: var(--ink2); margin-bottom: 4px; }
+.ip-wrap { display: flex; gap: 4px; }
+.ip-hint { margin-top: 9px; color: var(--ink3); font-size: 11.5px; line-height: 1.45; }
+
+/* ===== Асуух цонх (modal) ===== */
+.modal-back {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(10,18,40,.5);
+}
+.modal {
+  width: min(430px, 100%);
+  padding: 22px 22px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: 5px solid var(--ochre);
+  border-radius: var(--radius);
+  box-shadow: 0 24px 60px -20px rgba(0,0,0,.55);
+}
+.modal-icon { font-size: 26px; color: var(--ochre); margin-bottom: 8px; }
+.modal h2 { font-size: 16.5px; font-weight: 700; margin-bottom: 6px; }
+.modal p { font-size: 13.5px; line-height: 1.6; color: var(--ink2); margin-bottom: 18px; word-break: break-word; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.mbtn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--border2);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .14s, color .14s;
+}
+.mbtn:hover { background: var(--surface2); }
+.mbtn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.mbtn-danger { color: var(--rose-ink); border-color: var(--rose-soft); background: var(--rose-soft); }
+.mbtn-danger:hover { background: var(--rose); color: #fff; }
+.mbtn-main { background: var(--blue); color: #fff; border-color: var(--blue); }
+.mbtn-main:hover { background: var(--blue-ink); }
+
+/* ===== Төлвийн мөр ===== */
+.statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 4px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink3);
+}
+.statusbar .status-left { display: flex; gap: 8px; flex-wrap: wrap; }
+.statusbar .status-left span { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; }
+#wc { background: var(--blue-soft); color: var(--blue-ink); }
+#cc { background: var(--teal-soft); color: var(--teal-ink); }
+#lc { background: var(--violet-soft); color: var(--violet-ink); }
+.statusbar .status-left b { font-weight: 700; }
+.statusbar .status-right { display: flex; align-items: center; gap: 7px; }
+.statusbar .status-right i { color: var(--ochre); }
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 9px; border: 2px solid var(--surface); }
+::-webkit-scrollbar-thumb:hover { background: var(--blue); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
+
+/* Нарийн дэлгэц: цонхнуудыг доош нь байрлуулна */
+@media (max-width: 820px) {
+  .app { height: auto; min-height: 100vh; }
+  .editor-area { flex-direction: column; gap: 12px; }
+  .divider { display: none; }
+  #pane-editor { flex: 1 1 auto !important; }
+  .pane { min-height: 340px; }
+  .filechip { max-width: 40vw; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+<div class="appbar">
+  <div class="brand">
+    <div class="brand-mark"><i class="ti ti-markdown"></i></div>
+    <div class="brand-text">
+      <div class="brand-title">MD файл засварлагч</div>
+      <div class="brand-sub">Математикийн тэмдэглэгээг бичихэд зориулав.</div>
+    </div>
+  </div>
+  <div class="appbar-right">
+    <div class="filechip" id="filechip" title="Цэг харагдвал хадгалаагүй өөрчлөлт байна">
+      <i class="ti ti-file-text"></i><span id="filename">document.md</span><span class="dirty-dot"></span>
+    </div>
+    <button class="theme-btn" id="theme-btn" onclick="toggleTheme()"></button>
+  </div>
+</div>
+
+<div class="toolbar">
+  <div class="tgroup g-text" role="group" aria-label="Текст">
+    <button onclick="fmt('**','**')" title="Тод"><b>Т</b></button>
+    <button onclick="fmt('_','_')" title="Налуу"><i>Н</i></button>
+    <button onclick="fmt('~~','~~')" title="Дундуур зураас" style="text-decoration:line-through;">З</button>
+    <button onclick="fmt('`','`')" title="Код" style="font-family:var(--font-mono);">&lt;/&gt;</button>
+  </div>
+  <div class="tgroup g-head" role="group" aria-label="Гарчиг">
+    <button onclick="insLine('# ')" title="Гарчиг 1">H1</button>
+    <button onclick="insLine('## ')" title="Гарчиг 2">H2</button>
+    <button onclick="insLine('### ')" title="Гарчиг 3">H3</button>
+  </div>
+  <div class="tgroup g-block" role="group" aria-label="Блок">
+    <button onclick="insLine('- ')" title="Жагсаалт"><i class="ti ti-list"></i></button>
+    <button onclick="insLine('1. ')" title="Дугаарлагдсан жагсаалт"><i class="ti ti-list-numbers"></i></button>
+    <button onclick="insLine('> ')" title="Иш татах"><i class="ti ti-blockquote"></i></button>
+    <button onclick="insLine('---\n')" title="Хөндлөн зураас"><i class="ti ti-minus"></i></button>
+  </div>
+  <div class="tgroup g-insert" role="group" aria-label="Оруулах">
+    <button onclick="insLink()" title="Холбоос"><i class="ti ti-link"></i></button>
+    <button onclick="document.getElementById('img-input').click()" title="Зураг оруулах"><i class="ti ti-photo"></i></button>
+    <input type="file" id="img-input" accept="image/*" onchange="insImageFile(event)" style="display:none;">
+  </div>
+  <div class="tgroup g-math" role="group" aria-label="Томъёо">
+    <button onclick="fmt('$','$')" title="Хялбар томъёо">∑</button>
+    <button onclick="insDisplayMath()" title="Дэлгэрэнгүй томъёо">∫∫</button>
+  </div>
+  <div class="spacer"></div>
+  <div class="viewseg" role="group" aria-label="Гүйлгэлт">
+    <button id="sync-btn" onclick="toggleSync()" title="Хоёр цонхыг зэрэг гүйлгэх"><i class="ti ti-arrows-vertical"></i></button>
+  </div>
+  <div class="viewseg" role="group" aria-label="Харагдац">
+    <button id="seg-edit" onclick="setLayout('edit')" title="Зөвхөн засварлах"><i class="ti ti-pencil"></i></button>
+    <button id="seg-split" class="active" onclick="setLayout('split')" title="Засварлах ба харах"><i class="ti ti-layout-columns"></i></button>
+    <button id="seg-view" onclick="setLayout('view')" title="Зөвхөн харах"><i class="ti ti-eye"></i></button>
+  </div>
+</div>
+
+<div class="editor-area" id="editor-area">
+  <div class="pane" id="pane-editor">
+    <div class="pane-header">
+      <span class="ph-label"><i class="ti ti-pencil"></i> Засварлах цонх</span>
+      <span class="ph-actions">
+        <button class="ph-btn" onclick="openFile()" title="Файл нээх"><i class="ti ti-upload"></i> Нээх</button>
+        <input type="file" id="file-open-input" accept=".md,.markdown,.txt" onchange="loadFile(event)" style="display:none;">
+        <button class="ph-btn ph-btn-main" onclick="saveFile()" title="Хадгалах — нэрийг хэвээр дарж бичнэ (Ctrl+S)"><i class="ti ti-download"></i> Хадгалах</button>
+        <button class="ph-btn" onclick="saveFileAs()" title="Өөр нэрээр хадгалах"><i class="ti ti-file-plus"></i></button>
+        <button class="ph-btn ph-btn-close" onclick="setLayout('view')" title="Засварлах цонхыг хаах"><i class="ti ti-x"></i></button>
+      </span>
+    </div>
+    <textarea id="md-input" spellcheck="false" placeholder="Тэмдэглэгээгээ энд бичнэ үү..."></textarea>
+  </div>
+
+  <div class="divider" id="divider" role="separator" aria-orientation="vertical" tabindex="0"
+       aria-label="Цонхны өргөнийг өөрчлөх" title="Чирж өргөнийг өөрчилнө · давхар товшвол тэнцүүлнэ"></div>
+
+  <div class="pane" id="pane-preview">
+    <div class="pane-header">
+      <span class="ph-label"><i class="ti ti-eye"></i> Харах цонх</span>
+      <span class="ph-actions">
+        <button class="ph-btn ph-btn-pdf" onclick="savePDF()" title="PDF хэлбэрээр хадгалах"><i class="ti ti-file-type-pdf"></i> Хадгалах(PDF) / Хэвлэх</button>
+        <button class="ph-btn ph-btn-close" onclick="setLayout('edit')" title="Харах цонхыг хаах"><i class="ti ti-x"></i></button>
+      </span>
+    </div>
+    <div class="preview-scroll" id="md-preview"></div>
+  </div>
+</div>
+
+<div class="statusbar">
+  <div class="status-left">
+    <span id="wc"><b>0</b> үг</span>
+    <span id="cc"><b>0</b> тэмдэгт</span>
+    <span id="lc"><b>0</b> мөр</span>
+  </div>
+  <div class="status-right">
+    <i class="ti ti-math-function"></i> KaTeX · marked.js
+    <span class="copyright" style="margin-left:6px; padding-left:10px; border-left:1px solid var(--border2); color:var(--ink2);">© 2026 J.Dashdemberel</span>
+  </div>
+</div>
+
+</div>
+  </div>
+</div>
+
+</div>
+
+<!-- Зургийн тохиргооны самбар -->
+<div class="imgpanel" id="imgpanel" hidden>
+  <div class="ip-head">
+    <span><i class="ti ti-photo"></i> Зургийн хэмжээ</span>
+    <button class="ip-x" onclick="closeImgPanel()" title="Хаах"><i class="ti ti-x"></i></button>
+  </div>
+  <div class="ip-row">
+    <label>Өргөн<input id="ip-w" type="text" placeholder="авто" autocomplete="off"></label>
+    <label>Өндөр<input id="ip-h" type="text" inputmode="numeric" placeholder="авто" autocomplete="off"></label>
+  </div>
+  <div class="ip-quick">
+    <button data-w="25%">25%</button>
+    <button data-w="50%">50%</button>
+    <button data-w="100%">100%</button>
+    <button data-w="">Анхны</button>
+  </div>
+  <div class="ip-label">Текст ороох</div>
+  <div class="ip-wrap" role="group" aria-label="Текст ороох">
+    <button data-a="" title="Ороохгүй"><i class="ti ti-float-none"></i></button>
+    <button data-a="left" title="Зүүн талд — текст баруун талаар нь ороно"><i class="ti ti-float-left"></i></button>
+    <button data-a="center" title="Голлуулах"><i class="ti ti-float-center"></i></button>
+    <button data-a="right" title="Баруун талд — текст зүүн талаар нь ороно"><i class="ti ti-float-right"></i></button>
+  </div>
+  
+</div>
+
+<!-- Асуух цонх -->
+<div class="modal-back" id="modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-icon" id="modal-icon"></div>
+    <h2 id="modal-title"></h2>
+    <p id="modal-text"></p>
+    <div class="modal-actions" id="modal-actions"></div>
+  </div>
+</div>
+
+<script>
+const input = document.getElementById('md-input');
+const preview = document.getElementById('md-preview');
+const paneEditor = document.getElementById('pane-editor');
+const panePreview = document.getElementById('pane-preview');
+const editorArea = document.getElementById('editor-area');
+const divider = document.getElementById('divider');
+
+function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+
+// ===== Өдөр / шөнийн горим =====
+function updateThemeBtn() {
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const b = document.getElementById('theme-btn');
+  b.innerHTML = dark ? '<i class="ti ti-sun"></i>' : '<i class="ti ti-moon"></i>';
+  b.title = dark ? 'Өдрийн горим руу шилжих' : 'Шөнийн горим руу шилжих';
+  b.setAttribute('aria-label', b.title);
+}
+function toggleTheme() {
+  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  lsSet('mdeditor-theme', next);
+  updateThemeBtn();
+}
+updateThemeBtn();
+
+// ===== Overwrite-д ашиглах файлын handle (File System Access API) =====
+let fileHandle = null;
+const supportsFSA = ('showSaveFilePicker' in window);
+const MD_TYPES = [{ description: 'Markdown', accept: { 'text/markdown': ['.md', '.markdown', '.txt'] } }];
+
+// ===== Хадгалаагүй өөрчлөлт =====
+let dirty = false;
+function setDirty(v) {
+  dirty = v;
+  document.getElementById('filechip').classList.toggle('dirty', v);
+}
+function changed() { setDirty(true); render(); }
+
+// ===== Зургийн сан =====
+const imageStore = {};
+let imgCounter = 0;
+
+const IMG_MAX_DIM = 1280;
+const IMG_QUALITY = 0.82;
+
+function shrinkImage(dataURI) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      let w = img.width, h = img.height;
+      const scale = Math.min(1, IMG_MAX_DIM / Math.max(w, h));
+      w = Math.round(w * scale); h = Math.round(h * scale);
+      const cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      const ctx = cv.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      let hasAlpha = false;
+      try {
+        const d = ctx.getImageData(0, 0, w, h).data;
+        for (let i = 3; i < d.length; i += 4) { if (d[i] < 255) { hasAlpha = true; break; } }
+      } catch (e) {}
+      let out;
+      if (hasAlpha) {
+        out = cv.toDataURL('image/png');
+      } else {
+        const c2 = document.createElement('canvas');
+        c2.width = w; c2.height = h;
+        const x2 = c2.getContext('2d');
+        x2.fillStyle = '#fff'; x2.fillRect(0, 0, w, h);
+        x2.drawImage(cv, 0, 0);
+        out = c2.toDataURL('image/jpeg', IMG_QUALITY);
+      }
+      resolve(out.length < dataURI.length ? out : dataURI);
+    };
+    img.onerror = () => resolve(dataURI);
+    img.src = dataURI;
+  });
+}
+
+function addImage(dataURI) {
+  imgCounter++;
+  imageStore[imgCounter] = dataURI;
+  return 'img:' + imgCounter;
+}
+function expandImages(text) {
+  return text.replace(/\]\(img:(\d+)\)/g, (m, id) =>
+    imageStore[id] ? '](' + imageStore[id] + ')' : m);
+}
+function stashImages(text) {
+  return text.replace(/\]\((data:[^)]+)\)/g, (m, uri) => {
+    imgCounter++;
+    imageStore[imgCounter] = uri;
+    return '](img:' + imgCounter + ')';
+  });
+}
+
+// Жишээ зураг (зургийн ороолтыг харуулах)
+const demoSvg =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="440" height="300" viewBox="0 0 440 300">' +
+  '<rect width="440" height="300" rx="20" fill="#16285a"/>' +
+  '<rect x="50" y="170" width="52" height="90" rx="7" fill="#2f5bea"/>' +
+  '<rect x="122" y="125" width="52" height="135" rx="7" fill="#7b5cf0"/>' +
+  '<rect x="194" y="85" width="52" height="175" rx="7" fill="#0f9d8a"/>' +
+  '<rect x="266" y="140" width="52" height="120" rx="7" fill="#d8386b"/>' +
+  '<rect x="338" y="55" width="52" height="205" rx="7" fill="#e3931b"/>' +
+  '<rect x="40" y="262" width="360" height="4" rx="2" fill="#ffffff" opacity=".5"/></svg>';
+const demoImg = addImage('data:image/svg+xml;base64,' + btoa(demoSvg));
+
+const defaultMd = `# Зарим тэмдэглэгээний жишээ  
+
+
+![зураг|25%](images.jpeg)
+
+
+**Тод**  
+_Налуу_   
+~Дундуур зураас~  
+
+## Хялбар томъёо
+
+$ \\sqrt{n} $, $ O(n \\log n) $, $ n \\le 10^5 $
+
+## Дэлгэрэнгүй томъёо
+$$
+\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}
+$$
+
+## Жагсаалт
+
+- Зүйл нэг
+- Зүйл хоёр
+- Дэд зүйл  
+
+# Хүснэгт
+
+| Дэд бодлого | Хязгаарлалт | Оноо |
+| :-----: | ----------- | :----: |
+| 1       | $n \\le 3$   | 5      |
+| 2       | $n \\le 15$  | 10     |
+| 3       | $n \\le \\sqrt{n}$ | 20 |
+| 4       | Нэмэлт хязгаарлалт байхгүй | 65 |
+
+## Жишээ
+
+Оролт
+\`\`\`
+3
+1 2 3
+\`\`\`
+Гаралт
+\`\`\`
+6
+\`\`\`
+
+## Зураг
+
+![жишээ|200|right](img:1)
+Харах цонхонд зураг дээр товшоод өргөн, өндөр, байрлалыг шууд тохируулж болно. 
+
+
+## Програмын код
+
+\`\`\`cpp
+//C++
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    int n;
+    cin >> n;
+    cout << n * (n + 1) / 2 << endl;
+}
+\`\`\`
+
+\`\`\`csharp
+//C#
+using System;
+class Program
+{
+    // 1-ээс n хүртэлх тооны нийлбэр
+    static void Main()
+    {
+        long n = long.Parse(Console.ReadLine());
+        Console.WriteLine(n * (n + 1) / 2);
+    }
+}
+\`\`\`
+
+## Холбоос   хийх
+
+[Холбогдох] <a href="https://mail.google.com/mail/?view=cm&fs=1&to=dashdemberel@msue.edu.mn&su= Баярлааа" target="_blank">dashdemberel@msue.edu.mn</a>
+
+[Холбоос] <a href="https://informatics.edu.mn/onlinejudge/" target="_blank">informatics.edu.mn</a>
+
+> Иш татсан текст энд байна.
+`;
+
+input.value = defaultMd;
+
+function renderMath(html) {
+  return html
+    .replace(/\$\$([^$]+?)\$\$/gs, (_, tex) => {
+      try { return katex.renderToString(tex.trim(), { displayMode: true, throwOnError: false }); }
+      catch(e) { return '<code>' + tex + '</code>'; }
+    })
+    .replace(/\$([^$\n]+?)\$/g, (_, tex) => {
+      try { return katex.renderToString(tex.trim(), { displayMode: false, throwOnError: false }); }
+      catch(e) { return '<code>' + tex + '</code>'; }
+    });
+}
+
+// Кодын блок: төгсгөлийн хоосон мөрийг авч, түлхүүр үгийг будна
+function highlightCode() {
+  preview.querySelectorAll('pre code').forEach(el => {
+    el.textContent = el.textContent.replace(/\s+$/, '');
+    if (window.hljs) { try { hljs.highlightElement(el); } catch (e) {} }
+  });
+}
+
+// ===== Зургийн хэмжээ ба ороолт =====
+// Бичлэг: ![нэр|өргөн|байрлал](url)  ·  өргөн: 300, 50%, 300x200, x200  ·  байрлал: left | right | center
+const SIZE_RE = /^(\d+%?)?(?:x(\d+))?$/i;
+function parseAlt(alt) {
+  const parts = (alt || '').split('|');
+  const r = { name: parts.shift(), w: '', h: '', align: '' };
+  for (const p of parts) {
+    const s = p.trim().toLowerCase();
+    if (!s) continue;
+    if (s === 'left' || s === 'right' || s === 'center') { r.align = s; continue; }
+    const m = s.match(SIZE_RE);
+    if (m) { r.w = m[1] || ''; r.h = m[2] || ''; }
+  }
+  return r;
+}
+function buildAlt(r) {
+  let s = r.name;
+  if (r.w || r.h) s += '|' + (r.w || '') + (r.h ? 'x' + r.h : '');
+  if (r.align) s += '|' + r.align;
+  return s;
+}
+function decorateImages() {
+  preview.querySelectorAll('img').forEach((img, i) => {
+    const r = parseAlt(img.getAttribute('alt'));
+    img.alt = r.name.trim();
+    img.dataset.idx = i;
+    img.title = 'Товшиж хэмжээ, байрлалыг тохируулна';
+    if (r.w) img.style.width = /%$/.test(r.w) ? r.w : r.w + 'px';
+    if (r.h) img.style.height = r.h + 'px';
+    if (r.align) img.classList.add('img-' + r.align);
+  });
+}
+
+// Эх бичвэр дэх зургуудын байрлал (кодын блок доторхыг тооцохгүй)
+const IMG_MD = /!\[([^\]\n]*)\]\(([^)\s]*)((?:\s+"[^"\n]*")?)\)/g;
+function sourceImages(text) {
+  const masked = text
+    .replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, m => m.replace(/[^\n]/g, ' '))
+    .replace(/`[^`\n]+`/g, m => ' '.repeat(m.length));
+  const out = [];
+  IMG_MD.lastIndex = 0;
+  let m;
+  while ((m = IMG_MD.exec(masked))) out.push({ start: m.index, end: m.index + m[0].length });
+  return out;
+}
+function readSourceImage(idx) {
+  const it = sourceImages(input.value)[idx];
+  if (!it) return null;
+  const raw = input.value.slice(it.start, it.end);
+  const m = raw.match(/^!\[([^\]\n]*)\]\(([^)\s]*)((?:\s+"[^"\n]*")?)\)$/);
+  return m ? { it, raw, alt: m[1], url: m[2], title: m[3] } : null;
+}
+function updateImage(idx, patch) {
+  const s = readSourceImage(idx);
+  if (!s) return;
+  const r = Object.assign(parseAlt(s.alt), patch);
+  const next = '![' + buildAlt(r) + '](' + s.url + s.title + ')';
+  if (next === s.raw) return;
+  input.setRangeText(next, s.it.start, s.it.end, 'preserve');
+  changed();
+}
+
+// Самбар
+const ip = document.getElementById('imgpanel');
+const ipW = document.getElementById('ip-w');
+const ipH = document.getElementById('ip-h');
+let ipIdx = -1;
+
+function currentImg() { return preview.querySelector('img[data-idx="' + ipIdx + '"]'); }
+
+function openImgPanel(idx) {
+  ipIdx = idx;
+  ip.hidden = false;
+  refreshImgPanel();
+}
+function closeImgPanel() {
+  ip.hidden = true;
+  ipIdx = -1;
+  preview.querySelectorAll('img.is-selected').forEach(x => x.classList.remove('is-selected'));
+}
+function refreshImgPanel() {
+  if (ipIdx < 0) return;
+  const img = currentImg();
+  const s = readSourceImage(ipIdx);
+  if (!img || !s || panePreview.classList.contains('is-hidden')) { closeImgPanel(); return; }
+  preview.querySelectorAll('img.is-selected').forEach(x => x.classList.remove('is-selected'));
+  img.classList.add('is-selected');
+  const r = parseAlt(s.alt);
+  if (document.activeElement !== ipW) ipW.value = r.w;
+  if (document.activeElement !== ipH) ipH.value = r.h;
+  ip.querySelectorAll('.ip-wrap button').forEach(b => b.classList.toggle('active', b.dataset.a === r.align));
+  positionImgPanel(img);
+}
+function positionImgPanel(img) {
+  const r = img.getBoundingClientRect();
+  const pw = ip.offsetWidth, ph = ip.offsetHeight;
+  let top = r.bottom + 10;
+  if (top + ph > window.innerHeight - 10) top = r.top - ph - 10;
+  top = Math.min(Math.max(10, top), window.innerHeight - ph - 10);
+  let left = Math.min(Math.max(10, r.left), window.innerWidth - pw - 10);
+  ip.style.top = top + 'px';
+  ip.style.left = left + 'px';
+}
+
+preview.addEventListener('click', e => {
+  const img = e.target.closest('img');
+  if (img && img.dataset.idx != null) openImgPanel(+img.dataset.idx);
+});
+document.addEventListener('mousedown', e => {
+  if (ipIdx < 0) return;
+  if (ip.contains(e.target) || (e.target.closest && e.target.closest('#md-preview img'))) return;
+  closeImgPanel();
+});
+ipW.addEventListener('input', () => {
+  const v = ipW.value.trim().replace(/\s*px$/i, '');
+  if (v === '' || /^\d+%?$/.test(v)) updateImage(ipIdx, { w: v });
+});
+ipH.addEventListener('input', () => {
+  const v = ipH.value.trim().replace(/\s*px$/i, '');
+  if (v === '' || /^\d+$/.test(v)) updateImage(ipIdx, { h: v });
+});
+ip.querySelectorAll('.ip-quick button').forEach(b => b.addEventListener('click', () => {
+  updateImage(ipIdx, { w: b.dataset.w, h: '' });
+  ipW.value = b.dataset.w; ipH.value = '';
+  refreshImgPanel();
+}));
+ip.querySelectorAll('.ip-wrap button').forEach(b => b.addEventListener('click', () => {
+  updateImage(ipIdx, { align: b.dataset.a });
+  refreshImgPanel();
+}));
+
+// ===== Толгой: <!-- header: Зүүн · баруун · ... --> =====
+function escHTML(t) { return t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function headerHTML(cls) {
+  const hm = input.value.match(/<!--\s*header:\s*([\s\S]*?)\s*-->/i);
+  if (!hm || !hm[1].trim()) return '';
+  const parts = hm[1].split('·').map(x => x.trim()).filter(Boolean);
+  const left = escHTML(parts.shift() || '');
+  const right = escHTML(parts.join(' · '));
+  return '<div class="' + cls + '"><b>' + left + '</b><span>' + right + '</span></div>';
+}
+
+// ===== Харуулах =====
+function render() {
+  try {
+    preview.innerHTML = headerHTML('doc-head') + renderMath(marked.parse(expandImages(input.value)));
+    highlightCode();
+    decorateImages();
+  } catch(e) {}
+  const val = input.value;
+  const words = val.trim() ? val.trim().split(/\s+/).length : 0;
+  document.getElementById('wc').innerHTML = '<b>' + words + '</b> үг';
+  document.getElementById('cc').innerHTML = '<b>' + val.length + '</b> тэмдэгт';
+  document.getElementById('lc').innerHTML = '<b>' + val.split('\n').length + '</b> мөр';
+  refreshImgPanel();
+}
+
+input.addEventListener('input', () => { changed(); syncFrom(input, preview); });
+
+// ===== Зэрэг гүйлгэх =====
+let syncOn = lsGet('mdeditor-sync') !== 'off';
+let syncSrc = null, syncTimer = 0;
+function syncFrom(src, dst) {
+  if (!syncOn) return;
+  if (syncSrc && syncSrc !== src) return;   // нөгөө талаас ирсэн гүйлгэлтийн цуурай
+  syncSrc = src;
+  const max = src.scrollHeight - src.clientHeight;
+  const ratio = max > 0 ? src.scrollTop / max : 0;
+  dst.scrollTop = ratio * (dst.scrollHeight - dst.clientHeight);
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => { syncSrc = null; }, 120);
+}
+input.addEventListener('scroll', () => syncFrom(input, preview), { passive: true });
+preview.addEventListener('scroll', () => {
+  syncFrom(preview, input);
+  if (ipIdx >= 0) { const img = currentImg(); if (img) positionImgPanel(img); }
+}, { passive: true });
+
+function updateSyncBtn() {
+  const b = document.getElementById('sync-btn');
+  b.classList.toggle('active', syncOn);
+  b.setAttribute('aria-pressed', syncOn);
+  b.title = syncOn ? 'Идэвхтэй цонхыг гүйлгэх' : '2 цонхийг зэрэг гүйлгэх';
+}
+function toggleSync() {
+  syncOn = !syncOn;
+  lsSet('mdeditor-sync', syncOn ? 'on' : 'off');
+  updateSyncBtn();
+  if (syncOn) syncFrom(input, preview);
+}
+updateSyncBtn();
+
+// ===== Цонхны өргөнийг чирж өөрчлөх =====
+let layout = 'split';
+let splitPct = parseFloat(lsGet('mdeditor-split')) || 50;
+const narrowMQ = window.matchMedia('(max-width: 820px)');
+
+function clampPct(p) { return Math.min(85, Math.max(15, p)); }
+function applySplit() {
+  const on = layout === 'split' && !narrowMQ.matches;
+  divider.classList.toggle('is-hidden', layout !== 'split');
+  paneEditor.style.flex = on ? '0 0 ' + splitPct + '%' : '';
+  divider.setAttribute('aria-valuenow', Math.round(splitPct));
+}
+let dragging = false;
+divider.addEventListener('pointerdown', e => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  dragging = true;
+  divider.setPointerCapture(e.pointerId);
+  divider.classList.add('dragging');
+  document.body.classList.add('resizing');
+});
+divider.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  const r = editorArea.getBoundingClientRect();
+  splitPct = clampPct((e.clientX - r.left) / r.width * 100);
+  applySplit();
+  if (ipIdx >= 0) { const img = currentImg(); if (img) positionImgPanel(img); }
+});
+function endDrag() {
+  if (!dragging) return;
+  dragging = false;
+  divider.classList.remove('dragging');
+  document.body.classList.remove('resizing');
+  lsSet('mdeditor-split', splitPct.toFixed(1));
+}
+divider.addEventListener('pointerup', endDrag);
+divider.addEventListener('pointercancel', endDrag);
+divider.addEventListener('dblclick', () => { splitPct = 50; applySplit(); lsSet('mdeditor-split', '50'); });
+divider.addEventListener('keydown', e => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  e.preventDefault();
+  splitPct = clampPct(splitPct + (e.key === 'ArrowLeft' ? -2 : 2));
+  applySplit();
+  lsSet('mdeditor-split', splitPct.toFixed(1));
+});
+window.addEventListener('resize', () => {
+  applySplit();
+  if (ipIdx >= 0) { const img = currentImg(); if (img) positionImgPanel(img); }
+});
+
+// Харагдацыг тохируулах: 'split' | 'edit' | 'view'
+function setLayout(mode) {
+  layout = mode;
+  paneEditor.classList.toggle('is-hidden', mode === 'view');
+  panePreview.classList.toggle('is-hidden', mode === 'edit');
+  document.getElementById('seg-edit').classList.toggle('active', mode === 'edit');
+  document.getElementById('seg-split').classList.toggle('active', mode === 'split');
+  document.getElementById('seg-view').classList.toggle('active', mode === 'view');
+  if (mode === 'edit') closeImgPanel();
+  applySplit();
+}
+
+// ===== Бичих хэрэгслүүд =====
+function insertAtCursor(text) {
+  const s = input.selectionStart, e = input.selectionEnd;
+  input.setRangeText(text, s, e, 'end');
+  input.focus(); changed();
+}
+
+function insImageFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const alt = file.name.replace(/\.[^.]+$/, '').replace(/[|\]]/g, ' ');
+    shrinkImage(e.target.result).then(small => {
+      insertAtCursor('\n![' + alt + '](' + addImage(small) + ')\n');
+    });
+  };
+  reader.readAsDataURL(file);
+  event.target.value = '';
+}
+
+input.addEventListener('paste', (ev) => {
+  const items = ev.clipboardData && ev.clipboardData.items;
+  if (!items) return;
+  for (const it of items) {
+    if (it.type && it.type.indexOf('image') === 0) {
+      ev.preventDefault();
+      const file = it.getAsFile();
+      const reader = new FileReader();
+      reader.onload = e => shrinkImage(e.target.result).then(small => insertAtCursor('\n![зураг](' + addImage(small) + ')\n'));
+      reader.readAsDataURL(file);
+      return;
+    }
+  }
+});
+
+function fmt(before, after) {
+  const s = input.selectionStart, e = input.selectionEnd;
+  const sel = input.value.slice(s, e) || 'текст';
+  input.setRangeText(before + sel + after, s, e, 'select');
+  input.focus(); changed();
+}
+
+function insLine(prefix) {
+  const s = input.selectionStart;
+  const val = input.value;
+  const lineStart = val.lastIndexOf('\n', s - 1) + 1;
+  const atStart = s === lineStart;
+  input.setRangeText((atStart ? '' : '\n') + prefix, s, s, 'end');
+  input.focus(); changed();
+}
+
+function insLink() {
+  const s = input.selectionStart, e = input.selectionEnd;
+  const sel = input.value.slice(s, e) || 'холбоос';
+  input.setRangeText('[' + sel + '](https://)', s, e, 'end');
+  input.focus(); changed();
+}
+
+function insDisplayMath() {
+  const s = input.selectionStart;
+  const block = '\n$$\n\n$$\n';
+  input.setRangeText(block, s, s, 'end');
+  const pos = s + 4;
+  input.setSelectionRange(pos, pos);
+  input.focus(); changed();
+}
+
+// ===== Асуух цонх =====
+function showModal({ icon = 'ti-alert-triangle', title, text, buttons }) {
+  return new Promise(resolve => {
+    const back = document.getElementById('modal');
+    const acts = document.getElementById('modal-actions');
+    document.getElementById('modal-icon').innerHTML = '<i class="ti ' + icon + '"></i>';
+    document.getElementById('modal-title').textContent = title;
+    document.getElementById('modal-text').textContent = text;
+    acts.innerHTML = '';
+    const prevFocus = document.activeElement;
+
+    function done(v) {
+      back.hidden = true;
+      document.removeEventListener('keydown', onKey, true);
+      if (prevFocus && prevFocus.focus) prevFocus.focus();
+      resolve(v);
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done('cancel'); }
+    }
+    buttons.forEach(b => {
+      const el = document.createElement('button');
+      el.className = 'mbtn ' + (b.cls || '');
+      el.innerHTML = (b.icon ? '<i class="ti ' + b.icon + '"></i>' : '') + '<span></span>';
+      el.querySelector('span').textContent = b.label;
+      el.onclick = () => done(b.value);
+      acts.appendChild(el);
+    });
+    back.onclick = e => { if (e.target === back) done('cancel'); };
+    document.addEventListener('keydown', onKey, true);
+    back.hidden = false;
+    (acts.querySelector('.mbtn-main') || acts.firstChild).focus();
+  });
+}
+
+// ===== Хадгалах =====
+function currentName() {
+  let name = (document.getElementById('filename').textContent || '').trim() || 'document.md';
+  if (!/\.(md|markdown|txt)$/i.test(name)) name += '.md';
+  return name;
+}
+
+// Амжилттай хадгалсан бол true буцаана
+async function saveFile() {
+  const content = expandImages(input.value);
+  if (supportsFSA) {
+    try {
+      if (!fileHandle) {
+        fileHandle = await window.showSaveFilePicker({ suggestedName: currentName(), types: MD_TYPES });
+        document.getElementById('filename').textContent = fileHandle.name;
+      }
+      const writable = await fileHandle.createWritable();
+      await writable.write(content);
+      await writable.close();
+      setDirty(false);
+      return true;
+    } catch (e) {
+      if (e && e.name === 'AbortError') return false;
+    }
+  }
+  downloadFallback(content, currentName());
+  setDirty(false);
+  return true;
+}
+
+async function saveFileAs() {
+  const content = expandImages(input.value);
+  if (supportsFSA) {
+    try {
+      const handle = await window.showSaveFilePicker({ suggestedName: currentName(), types: MD_TYPES });
+      fileHandle = handle;
+      document.getElementById('filename').textContent = handle.name;
+      const writable = await handle.createWritable();
+      await writable.write(content);
+      await writable.close();
+      setDirty(false);
+      return true;
+    } catch (e) {
+      if (e && e.name === 'AbortError') return false;
+    }
+  }
+  downloadFallback(content, currentName());
+  setDirty(false);
+  return true;
+}
+
+function downloadFallback(content, name) {
+  const blob = new Blob([content], { type: 'text/markdown' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// ===== PDF / Хэвлэх =====
+const printCSS = `
+  @page { margin: 18mm; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Source Serif 4', Georgia, serif; font-size: 12pt; line-height: 1.7; color: #14213d; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  h1 { font-family: 'Manrope', system-ui, sans-serif; font-size: 21pt; font-weight: 800; color: #16285a; margin: 0 0 14px; padding-bottom: 10px;
+       background: linear-gradient(90deg, #2f5bea 0 20%, #7b5cf0 20% 40%, #0f9d8a 40% 60%, #d8386b 60% 80%, #e3931b 80% 100%) left bottom / 100% 3px no-repeat; }
+  h2 { font-family: 'Manrope', system-ui, sans-serif; font-size: 15pt; font-weight: 700; margin: 20px 0 9px; color: #2248c9; padding-left: 10px; border-left: 4px solid #2f5bea; }
+  h3 { font-family: 'Manrope', system-ui, sans-serif; font-size: 12.5pt; font-weight: 700; margin: 15px 0 7px; color: #0b7d6e; }
+  h1, h2, hr { clear: both; }
+  p { margin: 0 0 11px; }
+  ul, ol { margin: 0 0 11px; padding-left: 22px; }
+  li { margin: 4px 0; }
+  ul li::marker { color: #0f9d8a; }
+  ol li::marker { color: #7b5cf0; font-weight: 700; }
+  code { font-family: 'JetBrains Mono', monospace; font-size: 10.5pt; background: #fde6ee; color: #b8214f; padding: 1px 5px; border-radius: 5px; }
+  pre { display: block; width: fit-content; min-width: 50mm; max-width: 100%; background: #f6f8fd; border: 1px solid #dde4f2; border-left: 4px solid #7b5cf0; border-radius: 8px; padding: 6px 12px; overflow-x: auto; margin: 0 0 12px; line-height: 1.4; page-break-inside: avoid; }
+  pre code { display: block; background: none; color: #14213d; padding: 0; font-size: 10.5pt; line-height: inherit; }
+  table { border-collapse: separate; border-spacing: 0; width: 100%; margin: 0 0 12px; font-family: 'Manrope', system-ui, sans-serif; font-size: 11pt; border: 1px solid #dde4f2; border-radius: 8px; overflow: hidden; page-break-inside: avoid; }
+  th, td { padding: 7px 11px; border-bottom: 1px solid #dde4f2; }
+  th { background: #2f5bea; color: #fff; font-weight: 700; }
+  tr:last-child td { border-bottom: none; }
+  tr:nth-child(even) td { background: #e6edff; }
+  blockquote { border-left: 4px solid #e3931b; background: #fdf0d8; margin: 0 0 12px; padding: 2px 10px; border-radius: 0 5px 5px 0; color: #4a5878; font-style: italic; line-height: 1.5; }
+  blockquote p { margin: 0 0 3px; }
+  blockquote > :last-child { margin-bottom: 0; }
+  hr { border: none; height: 3px; margin: 18px 0;
+       background: linear-gradient(90deg, #2f5bea 0 20%, #7b5cf0 20% 40%, #0f9d8a 40% 60%, #d8386b 60% 80%, #e3931b 80% 100%); }
+  a { color: #2248c9; }
+  strong { font-weight: 700; }
+  em { color: #5d3fd6; }
+  img { display: block; max-width: 100%; height: auto; margin: 4px 0 12px; border-radius: 6px; page-break-inside: avoid; outline: none !important; }
+  img.img-left   { float: left;  margin: 4px 16px 8px 0; }
+  img.img-right  { float: right; margin: 4px 0 8px 16px; }
+  img.img-center { margin-left: auto; margin-right: auto; }
+  .katex-display { overflow-x: auto; margin: 10px 0; }
+  .hljs-keyword, .hljs-selector-tag { color: #5d3fd6; font-weight: 600; }
+  .hljs-type, .hljs-built_in, .hljs-title.class_ { color: #0b7d6e; }
+  .hljs-title.function_, .hljs-title { color: #2248c9; }
+  .hljs-string, .hljs-char { color: #a96200; }
+  .hljs-number, .hljs-literal { color: #b8214f; }
+  .hljs-meta, .hljs-meta .hljs-keyword { color: #b8214f; font-weight: 400; }
+  .hljs-meta .hljs-string { color: #a96200; }
+  .hljs-comment, .hljs-doctag { color: #8d9ab5; font-style: italic; }
+  .hljs-operator, .hljs-punctuation { color: #4a5878; }
+    table.page-wrap { width: 100%; border: none; border-radius: 0; overflow: visible; margin: 0; page-break-inside: auto; font-family: inherit; font-size: inherit; }
+  table.page-wrap > thead > tr > td, table.page-wrap > tbody > tr > td { padding: 0; border: none; background: none; }
+  .page-head { display: flex; justify-content: space-between; gap: 12px; font-family: 'Manrope', system-ui, sans-serif; font-size: 9pt; color: #4a5878; padding-bottom: 6px; margin-bottom: 16px;
+       background: linear-gradient(90deg, #2f5bea 0 20%, #7b5cf0 20% 40%, #0f9d8a 40% 60%, #d8386b 60% 80%, #e3931b 80% 100%) left bottom / 100% 2px no-repeat; }
+  .page-head b { color: #16285a; font-weight: 800; }
+`;
+
+function savePDF() {
+  closeImgPanel();
+  const title = (document.getElementById('filename').textContent || 'document').replace(/\.(md|markdown|txt)$/i, '') || 'document';
+  const frame = document.createElement('iframe');
+  frame.setAttribute('aria-hidden', 'true');
+  frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;';
+  document.body.appendChild(frame);
+
+  // Харах цонхны толгойг хасаад, PDF-д хуудас бүрт давтагдах толгой болгоно
+  const clone = preview.cloneNode(true);
+  clone.querySelectorAll('.doc-head').forEach(el => el.remove());
+  const head = headerHTML('page-head');
+  const bodyHTML = head
+    ? '<table class="page-wrap"><thead><tr><td>' + head + '</td></tr></thead><tbody><tr><td>' + clone.innerHTML + '</td></tr></tbody></table>'
+    : clone.innerHTML;
+
+  const doc = frame.contentWindow.document;
+  doc.open();
+  doc.write(
+    '<!DOCTYPE html><html lang="mn"><head><meta charset="utf-8">' +
+    '<title>' + title + '</title>' +
+    '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">' +
+    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>' +
+    '<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">' +
+    '<style>' + printCSS + '</style></head><body>' + bodyHTML + '</body></html>'
+  );
+  doc.close();
+
+  const run = () => {
+    const go = () => { frame.contentWindow.focus(); frame.contentWindow.print(); setTimeout(() => frame.remove(), 1500); };
+    if (frame.contentWindow.document.fonts && frame.contentWindow.document.fonts.ready) {
+      frame.contentWindow.document.fonts.ready.then(() => setTimeout(go, 200));
+    } else {
+      setTimeout(go, 500);
+    }
+  };
+
+  if (frame.contentWindow.document.readyState === 'complete') run();
+  else frame.onload = run;
+}
+
+// ===== Файл нээх =====
+function loadText(name, text) {
+  document.getElementById('filename').textContent = name;
+  closeImgPanel();
+  input.value = stashImages(text);
+  render();
+  setDirty(false);
+  input.scrollTop = 0;
+  preview.scrollTop = 0;
+}
+
+// Засвар орсон бол эхлээд хадгалах эсэхийг асууна
+async function openFile() {
+  if (dirty) {
+    const c = await showModal({
+      title: 'Хадгалаагүй өөрчлөлт байна',
+      text: '«' + currentName() + '» файлд хадгалаагүй засвар орсон байна. Өөр файл нээхээс өмнө хадгалах уу?',
+      buttons: [
+        { label: 'Цуцлах', value: 'cancel' },
+        { label: 'Хадгалахгүй', value: 'discard', cls: 'mbtn-danger' },
+        { label: 'Хадгалах', value: 'save', cls: 'mbtn-main', icon: 'ti-download' }
+      ]
+    });
+    if (c === 'cancel') return;
+    if (c === 'save' && !(await saveFile())) return;
+  }
+  await pickAndOpen();
+}
+
+async function pickAndOpen() {
+  if ('showOpenFilePicker' in window) {
+    try {
+      const [handle] = await window.showOpenFilePicker({ types: MD_TYPES, multiple: false });
+      fileHandle = handle;
+      const file = await handle.getFile();
+      loadText(file.name, await file.text());
+      return;
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;
+      // Хадгалах цонх гарсны дараа хөтөч шинэ товшилт шаардаж болно
+      if (e && e.name === 'SecurityError') {
+        const c = await showModal({
+          icon: 'ti-circle-check',
+          title: 'Хадгалагдлаа',
+          text: 'Одоо нээх файлаа сонгоно уу.',
+          buttons: [
+            { label: 'Болих', value: 'cancel' },
+            { label: 'Файл сонгох', value: 'open', cls: 'mbtn-main', icon: 'ti-upload' }
+          ]
+        });
+        if (c === 'open') return pickAndOpen();
+        return;
+      }
+    }
+  }
+  document.getElementById('file-open-input').click();
+}
+
+function loadFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  fileHandle = null;
+  const reader = new FileReader();
+  reader.onload = e => loadText(file.name, e.target.result);
+  reader.readAsText(file);
+  event.target.value = '';
+}
+
+// Хуудсыг хаах/сэргээх үед хадгалаагүй бол анхааруулна
+window.addEventListener('beforeunload', e => {
+  if (dirty) { e.preventDefault(); e.returnValue = ''; }
+});
+
+// Товчлол: Ctrl+S — хадгалах, Esc — зургийн самбар хаах
+document.addEventListener('keydown', (e) => {
+  if (!document.getElementById('modal').hidden) return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    saveFile();
+  } else if (e.key === 'Escape' && ipIdx >= 0) {
+    closeImgPanel();
+  }
+});
+
+applySplit();
+render();
+setDirty(false);
+</script>
+</body>
+</html>
