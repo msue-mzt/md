@@ -1,0 +1,1168 @@
+<script>
+const input = document.getElementById('md-input');
+const preview = document.getElementById('md-preview');
+const paneEditor = document.getElementById('pane-editor');
+const panePreview = document.getElementById('pane-preview');
+const editorArea = document.getElementById('editor-area');
+const divider = document.getElementById('divider');
+
+function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+
+// ===== Өдөр / шөнийн горим =====
+function updateThemeBtn() {
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const b = document.getElementById('theme-btn');
+  b.innerHTML = dark ? '<i class="ti ti-sun"></i>' : '<i class="ti ti-moon"></i>';
+  b.title = dark ? 'Өдрийн горим руу шилжих' : 'Шөнийн горим руу шилжих';
+  b.setAttribute('aria-label', b.title);
+}
+function toggleTheme() {
+  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  lsSet('mdeditor-theme', next);
+  updateThemeBtn();
+}
+updateThemeBtn();
+
+// ===== Google Drive =====
+// Apps Script вэб апп нь cross-origin iframe дотор ажилладаг тул
+// File System Access API (showSaveFilePicker) ажиллахгүй — бүх хадгалалт Drive-аар.
+let driveId = (typeof DRIVE_FILE_ID === 'string' && DRIVE_FILE_ID) || '';
+const driveFolderId = (typeof DRIVE_FOLDER_ID === 'string' && DRIVE_FOLDER_ID) || '';
+let driveTs = 0;          // файлыг нээх/хадгалах үеийн өөрчлөгдсөн хугацаа (давхар засварыг илрүүлэх)
+let busy = false;
+
+function gs(fn, ...args) {
+  return new Promise((resolve, reject) => {
+    google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[fn](...args);
+  });
+}
+function updateFileIcon() {
+  document.getElementById('file-icon').className =
+    'ti ' + (busy ? 'ti-loader-2 spin' : (driveId ? 'ti-brand-google-drive' : 'ti-file-text'));
+}
+function setBusy(v) { busy = v; updateFileIcon(); }
+function setFileName(name) { document.getElementById('filename').textContent = name; }
+function rememberUrl() {
+  // Хуудсыг дахин ачаалахад тухайн файл нээгдэхээр URL-д ?id= бичнэ
+  try { if (driveId) google.script.history.replace(null, { id: driveId }); } catch (e) {}
+}
+// Drive линк эсвэл ID-аас файлын ID-г гаргана
+function parseDriveId(s) {
+  s = (s || '').trim();
+  const m = s.match(/\/d\/([-\w]{20,})/) || s.match(/[?&]id=([-\w]{20,})/) || s.match(/^([-\w]{20,})$/);
+  return m ? m[1] : '';
+}
+function normName(s) {
+  let name = (s || '').trim() || 'document.md';
+  if (!/\.(md|markdown|txt)$/i.test(name)) name += '.md';
+  return name;
+}
+function showError(title, err) {
+  return showModal({
+    icon: 'ti-alert-circle',
+    title,
+    text: (err && err.message) || String(err),
+    buttons: [{ label: 'Ойлголоо', value: 'ok', cls: 'mbtn-main' }]
+  });
+}
+
+// ===== Хадгалаагүй өөрчлөлт =====
+let dirty = false;
+function setDirty(v) {
+  dirty = v;
+  document.getElementById('filechip').classList.toggle('dirty', v);
+}
+function changed() { setDirty(true); render(); }
+
+// ===== Зургийн сан =====
+const imageStore = {};
+let imgCounter = 0;
+
+const IMG_MAX_DIM = 1280;
+const IMG_QUALITY = 0.82;
+
+function shrinkImage(dataURI) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      let w = img.width, h = img.height;
+      const scale = Math.min(1, IMG_MAX_DIM / Math.max(w, h));
+      w = Math.round(w * scale); h = Math.round(h * scale);
+      const cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      const ctx = cv.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      let hasAlpha = false;
+      try {
+        const d = ctx.getImageData(0, 0, w, h).data;
+        for (let i = 3; i < d.length; i += 4) { if (d[i] < 255) { hasAlpha = true; break; } }
+      } catch (e) {}
+      let out;
+      if (hasAlpha) {
+        out = cv.toDataURL('image/png');
+      } else {
+        const c2 = document.createElement('canvas');
+        c2.width = w; c2.height = h;
+        const x2 = c2.getContext('2d');
+        x2.fillStyle = '#fff'; x2.fillRect(0, 0, w, h);
+        x2.drawImage(cv, 0, 0);
+        out = c2.toDataURL('image/jpeg', IMG_QUALITY);
+      }
+      resolve(out.length < dataURI.length ? out : dataURI);
+    };
+    img.onerror = () => resolve(dataURI);
+    img.src = dataURI;
+  });
+}
+
+function addImage(dataURI) {
+  imgCounter++;
+  imageStore[imgCounter] = dataURI;
+  return 'img:' + imgCounter;
+}
+function expandImages(text) {
+  return text.replace(/\]\(img:(\d+)\)/g, (m, id) =>
+    imageStore[id] ? '](' + imageStore[id] + ')' : m);
+}
+function stashImages(text) {
+  return text.replace(/\]\((data:[^)]+)\)/g, (m, uri) => {
+    imgCounter++;
+    imageStore[imgCounter] = uri;
+    return '](img:' + imgCounter + ')';
+  });
+}
+
+// ===== Drive дахь зураг =====
+// ![нэр](a.png)      → .md файлтай нэг хавтаснаас
+// ![нэр](img/a.png)  → дэд хавтаснаас
+// ![нэр](drive:ID)   эсвэл Drive-ийн линк
+// Файлд нэр/холбоос нь хадгалагдана; зөвхөн харуулахдаа data URI болгоно.
+const driveImg = {};            // ref → 'loading' | { src } | { error }
+const pendingRefs = new Set();
+let imgTimer = 0;
+
+function isAbsRef(u) { return /^drive:/i.test(u) || /^https?:\/\/(drive|docs)\.google\.com\//i.test(u); }
+function isDriveRef(u) {
+  if (!u || /^(data:|blob:|img:|#)/i.test(u)) return false;
+  return isAbsRef(u) || !/^[a-z][\w+.-]*:/i.test(u) && !u.startsWith('//');
+}
+function placeholderSvg(text, color) {
+  const t = escHTML(text.length > 60 ? text.slice(0, 57) + '…' : text);
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="360" height="110">' +
+    '<rect x="1" y="1" width="358" height="108" rx="10" fill="#f6f8fd" stroke="' + color + '" stroke-width="1.5" stroke-dasharray="6 4"/>' +
+    '<text x="180" y="59" text-anchor="middle" font-family="sans-serif" font-size="13" fill="' + color + '">' + t + '</text></svg>';
+  return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg).replace(/\(/g, '%28').replace(/\)/g, '%29');
+}
+function resetDriveImages() {
+  Object.keys(driveImg).forEach(k => delete driveImg[k]);
+  pendingRefs.clear();
+}
+// Олдоогүй зургуудыг дахин шалгуулна (Drive-д зураг нэмээд буцаж ирэхэд)
+function retryMissingImages() {
+  let any = false;
+  Object.keys(driveImg).forEach(k => { if (driveImg[k] && driveImg[k].error) { delete driveImg[k]; any = true; } });
+  if (any) render();
+}
+window.addEventListener('focus', retryMissingImages);
+
+function queueDriveImages(refs) {
+  refs.forEach(r => pendingRefs.add(r));
+  clearTimeout(imgTimer);
+  imgTimer = setTimeout(flushDriveImages, 500);   // бичиж байх үед хэсэгчилсэн нэрээр хайхгүй
+}
+async function flushDriveImages() {
+  const refs = [...pendingRefs].filter(r => !(r in driveImg));
+  pendingRefs.clear();
+  if (!refs.length) return;
+  refs.forEach(r => { driveImg[r] = 'loading'; });
+  const forId = driveId;
+  for (let i = 0; i < refs.length; i += 8) {
+    const chunk = refs.slice(i, i + 8);
+    try {
+      const res = await gs('resolveImages', driveId || '', chunk);
+      if (forId !== driveId) return;
+      chunk.forEach(r => { driveImg[r] = res[r] || { error: 'Олдсонгүй' }; });
+    } catch (e) {
+      if (forId !== driveId) return;
+      chunk.forEach(r => { driveImg[r] = { error: 'Ачаалж чадсангүй' }; });
+    }
+    render();
+  }
+}
+
+// Харуулахад зориулсан эх: Drive-ийн зургийг data URI (эсвэл түр зураг)-аар солино
+function renderSource() {
+  let text = input.value;
+  const imgs = sourceImages(text);
+  const need = [];
+  for (let k = imgs.length - 1; k >= 0; k--) {
+    const { start, end } = imgs[k];
+    const m = text.slice(start, end).match(/^!\[([^\]\n]*)\]\(([^)\s]*)((?:\s+"[^"\n]*")?)\)$/);
+    if (!m || !isDriveRef(m[2])) continue;
+    const ref = m[2], st = driveImg[ref];
+    let src;
+    if (st && st.src) src = st.src;
+    else if (st && st.error) src = placeholderSvg('⚠ ' + st.error + ': ' + ref, '#d8386b');
+    else if (!driveId && !isAbsRef(ref)) src = placeholderSvg('Drive-д хадгалсны дараа харагдана: ' + ref, '#a96200');
+    else { src = placeholderSvg('Ачаалж байна… ' + ref, '#8d9ab5'); if (!st) need.push(ref); }
+    text = text.slice(0, start) + '![' + m[1] + '](' + src + m[3] + ')' + text.slice(end);
+  }
+  if (need.length) queueDriveImages(need);
+  return expandImages(text);
+}
+
+// Шинэ зураг: Drive дээрх файл бол түүний хавтсанд хадгалж нэрээр нь холбоно,
+// үгүй бол (эсвэл алдаа гарвал) өмнөх шигээ .md файл дотор хадгална.
+async function placeImage(dataURI, baseName) {
+  const small = await shrinkImage(dataURI);
+  if (driveId) {
+    setBusy(true);
+    try {
+      const r = await gs('uploadImage', driveId, baseName, small);
+      driveImg[r.ref] = { src: small };
+      return r.ref;
+    } catch (e) {
+      await showError('Зургийг Drive-д хадгалж чадсангүй — файл дотор хадгална', e);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return addImage(small);
+}
+
+// Жишээ зураг (зургийн ороолтыг харуулах)
+const demoSvg =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="440" height="300" viewBox="0 0 440 300">' +
+  '<rect width="440" height="300" rx="20" fill="#16285a"/>' +
+  '<rect x="50" y="170" width="52" height="90" rx="7" fill="#2f5bea"/>' +
+  '<rect x="122" y="125" width="52" height="135" rx="7" fill="#7b5cf0"/>' +
+  '<rect x="194" y="85" width="52" height="175" rx="7" fill="#0f9d8a"/>' +
+  '<rect x="266" y="140" width="52" height="120" rx="7" fill="#d8386b"/>' +
+  '<rect x="338" y="55" width="52" height="205" rx="7" fill="#e3931b"/>' +
+  '<rect x="40" y="262" width="360" height="4" rx="2" fill="#ffffff" opacity=".5"/></svg>';
+const demoImg = addImage('data:image/svg+xml;base64,' + btoa(demoSvg));
+
+const defaultMd = `<!-- header: Эчнээ олимпиад · Бодлого 1 · Ахлах -->
+<!-- footer: page -->
+<!-- images: https://drive.google.com/drive/u/0/folders/1GxEsfQHfjzc8tgepbud2qcdbmHEoBAAA -->
+
+# Зарим тэмдэглэгээний жишээ
+
+![зураг|25%](images.jpeg)
+
+**Тод**  
+_Налуу_   
+~Дундуур зураас~  
+
+## Хялбар томъёо
+
+$ \\sqrt{n} $, $ O(n \\log n) $, $ n \\le 10^5 $
+
+## Дэлгэрэнгүй томъёо
+$$
+\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}
+$$
+
+## Жагсаалт
+
+- Зүйл нэг
+- Зүйл хоёр
+- Дэд зүйл  
+
+# Хүснэгт
+
+| Дэд бодлого | Хязгаарлалт | Оноо |
+| :-----: | ----------- | :----: |
+| 1       | $n \\le 3$   | 5      |
+| 2       | $n \\le 15$  | 10     |
+| 3       | $n \\le \\sqrt{n}$ | 20 |
+| 4       | Нэмэлт хязгаарлалт байхгүй | 65 |
+
+## Жишээ
+
+Оролт
+\`\`\`
+3
+1 2 3
+\`\`\`
+Гаралт
+\`\`\`
+6
+\`\`\`
+
+## Зураг
+
+![жишээ|200|right](img:1)
+Харах цонхонд зураг дээр товшоод өргөн, өндөр, байрлалыг шууд тохируулж болно. 
+
+
+## Програмын код
+
+\`\`\`cpp
+//C++
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    int n;
+    cin >> n;
+    cout << n * (n + 1) / 2 << endl;
+}
+\`\`\`
+
+\`\`\`csharp
+//C#
+using System;
+class Program
+{
+    // 1-ээс n хүртэлх тооны нийлбэр
+    static void Main()
+    {
+        long n = long.Parse(Console.ReadLine());
+        Console.WriteLine(n * (n + 1) / 2);
+    }
+}
+\`\`\`
+
+## Холбоос   хийх
+
+[Холбогдох] <a href="https://mail.google.com/mail/?view=cm&fs=1&to=dashdemberel@msue.edu.mn&su= Баярлааа" target="_blank">dashdemberel@msue.edu.mn</a>
+
+[Холбоос] <a href="https://informatics.edu.mn/onlinejudge/" target="_blank">informatics.edu.mn</a>
+
+> Иш татсан текст энд байна.
+`;
+
+function renderMath(html) {
+  return html
+    .replace(/\$\$([^$]+?)\$\$/gs, (_, tex) => {
+      try { return katex.renderToString(tex.trim(), { displayMode: true, throwOnError: false }); }
+      catch(e) { return '<code>' + tex + '</code>'; }
+    })
+    .replace(/\$([^$\n]+?)\$/g, (_, tex) => {
+      try { return katex.renderToString(tex.trim(), { displayMode: false, throwOnError: false }); }
+      catch(e) { return '<code>' + tex + '</code>'; }
+    });
+}
+
+// Кодын блок: төгсгөлийн хоосон мөрийг авч, түлхүүр үгийг будна
+function highlightCode() {
+  preview.querySelectorAll('pre code').forEach(el => {
+    el.textContent = el.textContent.replace(/\s+$/, '');
+    if (window.hljs) { try { hljs.highlightElement(el); } catch (e) {} }
+  });
+}
+
+// Харах цонхны холбоосыг шинэ табд нээнэ (iframe дотор нээгдэхгүй)
+function fixLinks() {
+  preview.querySelectorAll('a[href]').forEach(a => {
+    if (!a.getAttribute('href').startsWith('#')) { a.target = '_blank'; a.rel = 'noopener'; }
+  });
+}
+
+// ===== Зургийн хэмжээ ба ороолт =====
+// Бичлэг: ![нэр|өргөн|байрлал](url)  ·  өргөн: 300, 50%, 300x200, x200  ·  байрлал: left | right | center
+const SIZE_RE = /^(\d+%?)?(?:x(\d+))?$/i;
+function parseAlt(alt) {
+  const parts = (alt || '').split('|');
+  const r = { name: parts.shift(), w: '', h: '', align: '' };
+  for (const p of parts) {
+    const s = p.trim().toLowerCase();
+    if (!s) continue;
+    if (s === 'left' || s === 'right' || s === 'center') { r.align = s; continue; }
+    const m = s.match(SIZE_RE);
+    if (m) { r.w = m[1] || ''; r.h = m[2] || ''; }
+  }
+  return r;
+}
+function buildAlt(r) {
+  let s = r.name;
+  if (r.w || r.h) s += '|' + (r.w || '') + (r.h ? 'x' + r.h : '');
+  if (r.align) s += '|' + r.align;
+  return s;
+}
+function decorateImages() {
+  preview.querySelectorAll('img').forEach((img, i) => {
+    const r = parseAlt(img.getAttribute('alt'));
+    img.alt = r.name.trim();
+    img.dataset.idx = i;
+    img.title = 'Товшиж хэмжээ, байрлалыг тохируулна';
+    if (r.w) img.style.width = /%$/.test(r.w) ? r.w : r.w + 'px';
+    if (r.h) img.style.height = r.h + 'px';
+    if (r.align) img.classList.add('img-' + r.align);
+  });
+}
+
+// Эх бичвэр дэх зургуудын байрлал (кодын блок доторхыг тооцохгүй)
+const IMG_MD = /!\[([^\]\n]*)\]\(([^)\s]*)((?:\s+"[^"\n]*")?)\)/g;
+function sourceImages(text) {
+  const masked = text
+    .replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, m => m.replace(/[^\n]/g, ' '))
+    .replace(/`[^`\n]+`/g, m => ' '.repeat(m.length));
+  const out = [];
+  IMG_MD.lastIndex = 0;
+  let m;
+  while ((m = IMG_MD.exec(masked))) out.push({ start: m.index, end: m.index + m[0].length });
+  return out;
+}
+function readSourceImage(idx) {
+  const it = sourceImages(input.value)[idx];
+  if (!it) return null;
+  const raw = input.value.slice(it.start, it.end);
+  const m = raw.match(/^!\[([^\]\n]*)\]\(([^)\s]*)((?:\s+"[^"\n]*")?)\)$/);
+  return m ? { it, raw, alt: m[1], url: m[2], title: m[3] } : null;
+}
+function updateImage(idx, patch) {
+  const s = readSourceImage(idx);
+  if (!s) return;
+  const r = Object.assign(parseAlt(s.alt), patch);
+  const next = '![' + buildAlt(r) + '](' + s.url + s.title + ')';
+  if (next === s.raw) return;
+  input.setRangeText(next, s.it.start, s.it.end, 'preserve');
+  changed();
+}
+
+// Самбар
+const ip = document.getElementById('imgpanel');
+const ipW = document.getElementById('ip-w');
+const ipH = document.getElementById('ip-h');
+let ipIdx = -1;
+
+function currentImg() { return preview.querySelector('img[data-idx="' + ipIdx + '"]'); }
+
+function openImgPanel(idx) {
+  ipIdx = idx;
+  ip.hidden = false;
+  refreshImgPanel();
+}
+function closeImgPanel() {
+  ip.hidden = true;
+  ipIdx = -1;
+  preview.querySelectorAll('img.is-selected').forEach(x => x.classList.remove('is-selected'));
+}
+function refreshImgPanel() {
+  if (ipIdx < 0) return;
+  const img = currentImg();
+  const s = readSourceImage(ipIdx);
+  if (!img || !s || panePreview.classList.contains('is-hidden')) { closeImgPanel(); return; }
+  preview.querySelectorAll('img.is-selected').forEach(x => x.classList.remove('is-selected'));
+  img.classList.add('is-selected');
+  const r = parseAlt(s.alt);
+  if (document.activeElement !== ipW) ipW.value = r.w;
+  if (document.activeElement !== ipH) ipH.value = r.h;
+  ip.querySelectorAll('.ip-wrap button').forEach(b => b.classList.toggle('active', b.dataset.a === r.align));
+  positionImgPanel(img);
+}
+function positionImgPanel(img) {
+  const r = img.getBoundingClientRect();
+  const pw = ip.offsetWidth, ph = ip.offsetHeight;
+  let top = r.bottom + 10;
+  if (top + ph > window.innerHeight - 10) top = r.top - ph - 10;
+  top = Math.min(Math.max(10, top), window.innerHeight - ph - 10);
+  let left = Math.min(Math.max(10, r.left), window.innerWidth - pw - 10);
+  ip.style.top = top + 'px';
+  ip.style.left = left + 'px';
+}
+
+preview.addEventListener('click', e => {
+  const img = e.target.closest('img');
+  if (img && img.dataset.idx != null) openImgPanel(+img.dataset.idx);
+});
+document.addEventListener('mousedown', e => {
+  if (ipIdx < 0) return;
+  if (ip.contains(e.target) || (e.target.closest && e.target.closest('#md-preview img'))) return;
+  closeImgPanel();
+});
+ipW.addEventListener('input', () => {
+  const v = ipW.value.trim().replace(/\s*px$/i, '');
+  if (v === '' || /^\d+%?$/.test(v)) updateImage(ipIdx, { w: v });
+});
+ipH.addEventListener('input', () => {
+  const v = ipH.value.trim().replace(/\s*px$/i, '');
+  if (v === '' || /^\d+$/.test(v)) updateImage(ipIdx, { h: v });
+});
+ip.querySelectorAll('.ip-quick button').forEach(b => b.addEventListener('click', () => {
+  updateImage(ipIdx, { w: b.dataset.w, h: '' });
+  ipW.value = b.dataset.w; ipH.value = '';
+  refreshImgPanel();
+}));
+ip.querySelectorAll('.ip-wrap button').forEach(b => b.addEventListener('click', () => {
+  updateImage(ipIdx, { align: b.dataset.a });
+  refreshImgPanel();
+}));
+
+// ===== Толгой ба хуудасны дугаар =====
+// <!-- header: Зүүн · баруун · ... -->
+// <!-- footer: page -->        → 1, 2, 3 ...
+// <!-- footer: page/pages -->  → 1 / 3, 2 / 3 ...
+const HEAD_RE = /<!--\s*header:\s*([\s\S]*?)\s*-->[ \t]*\n?/i;
+const FOOT_RE = /<!--\s*footer:\s*([\s\S]*?)\s*-->[ \t]*\n?/i;
+
+function escHTML(t) { return t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function headerHTML(cls) {
+  const hm = input.value.match(HEAD_RE);
+  if (!hm || !hm[1].trim()) return '';
+  const parts = hm[1].split('·').map(x => x.trim()).filter(Boolean);
+  const left = escHTML(parts.shift() || '');
+  const right = escHTML(parts.join(' · '));
+  return '<div class="' + cls + '"><b>' + left + '</b><span>' + right + '</span></div>';
+}
+function footerMode() {
+  const m = input.value.match(FOOT_RE);
+  if (!m) return '';
+  return /pages/i.test(m[1]) ? 'pages' : 'page';
+}
+function footerPreview() {
+  const f = footerMode();
+  return f ? '<div class="doc-foot">' + (f === 'pages' ? '1 / N' : '1') + '</div>' : '';
+}
+function insHeader() {
+  const m = input.value.match(HEAD_RE);
+  if (m) {                       // байгаа бол текстийг нь сонгож засуулна
+    const s = m.index + m[0].indexOf(':') + 1;
+    const e = m.index + m[0].lastIndexOf('-->');
+    const seg = input.value.slice(s, e);
+    const lead = seg.length - seg.trimStart().length;
+    const trail = seg.length - seg.trimEnd().length;
+    input.focus();
+    input.setSelectionRange(s + lead, Math.max(s + lead, e - trail));
+    return;
+  }
+  input.setRangeText('<!-- header: Олимпиад · Бодлого 1 · Ангилал -->\n', 0, 0, 'end');
+  input.focus(); changed();
+}
+function insFooter() {
+  const m = input.value.match(FOOT_RE);
+  if (m) {
+    input.setRangeText('', m.index, m.index + m[0].length, 'end');   // байгаа бол хасна
+  } else {
+    const h = input.value.match(HEAD_RE);
+    const pos = h ? h.index + h[0].length : 0;                         // header-ийн дараа
+    input.setRangeText('<!-- footer: page -->\n', pos, pos, 'end');
+  }
+  input.focus(); changed();
+}
+
+// ===== Харуулах =====
+function render() {
+  try {
+    preview.innerHTML = headerHTML('doc-head') + renderMath(marked.parse(renderSource())) + footerPreview();
+    highlightCode();
+    decorateImages();
+    fixLinks();
+  } catch(e) {}
+  const val = input.value;
+  const words = val.trim() ? val.trim().split(/\s+/).length : 0;
+  document.getElementById('wc').innerHTML = '<b>' + words + '</b> үг';
+  document.getElementById('cc').innerHTML = '<b>' + val.length + '</b> тэмдэгт';
+  document.getElementById('lc').innerHTML = '<b>' + val.split('\n').length + '</b> мөр';
+  document.getElementById('head-btn').classList.toggle('active', HEAD_RE.test(val));
+  document.getElementById('foot-btn').classList.toggle('active', !!footerMode());
+  refreshImgPanel();
+}
+
+input.addEventListener('input', () => { changed(); syncFrom(input, preview); });
+
+// ===== Зэрэг гүйлгэх =====
+let syncOn = lsGet('mdeditor-sync') !== 'off';
+let syncSrc = null, syncTimer = 0;
+function syncFrom(src, dst) {
+  if (!syncOn) return;
+  if (syncSrc && syncSrc !== src) return;   // нөгөө талаас ирсэн гүйлгэлтийн цуурай
+  syncSrc = src;
+  const max = src.scrollHeight - src.clientHeight;
+  const ratio = max > 0 ? src.scrollTop / max : 0;
+  dst.scrollTop = ratio * (dst.scrollHeight - dst.clientHeight);
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => { syncSrc = null; }, 120);
+}
+input.addEventListener('scroll', () => syncFrom(input, preview), { passive: true });
+preview.addEventListener('scroll', () => {
+  syncFrom(preview, input);
+  if (ipIdx >= 0) { const img = currentImg(); if (img) positionImgPanel(img); }
+}, { passive: true });
+
+function updateSyncBtn() {
+  const b = document.getElementById('sync-btn');
+  b.classList.toggle('active', syncOn);
+  b.setAttribute('aria-pressed', syncOn);
+  b.title = syncOn ? 'Идэвхтэй цонхыг гүйлгэх' : '2 цонхийг зэрэг гүйлгэх';
+}
+function toggleSync() {
+  syncOn = !syncOn;
+  lsSet('mdeditor-sync', syncOn ? 'on' : 'off');
+  updateSyncBtn();
+  if (syncOn) syncFrom(input, preview);
+}
+updateSyncBtn();
+
+// ===== Цонхны өргөнийг чирж өөрчлөх =====
+let layout = 'split';
+let splitPct = parseFloat(lsGet('mdeditor-split')) || 50;
+const narrowMQ = window.matchMedia('(max-width: 820px)');
+
+function clampPct(p) { return Math.min(85, Math.max(15, p)); }
+function applySplit() {
+  const on = layout === 'split' && !narrowMQ.matches;
+  divider.classList.toggle('is-hidden', layout !== 'split');
+  paneEditor.style.flex = on ? '0 0 ' + splitPct + '%' : '';
+  divider.setAttribute('aria-valuenow', Math.round(splitPct));
+}
+let dragging = false;
+divider.addEventListener('pointerdown', e => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  dragging = true;
+  divider.setPointerCapture(e.pointerId);
+  divider.classList.add('dragging');
+  document.body.classList.add('resizing');
+});
+divider.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  const r = editorArea.getBoundingClientRect();
+  splitPct = clampPct((e.clientX - r.left) / r.width * 100);
+  applySplit();
+  if (ipIdx >= 0) { const img = currentImg(); if (img) positionImgPanel(img); }
+});
+function endDrag() {
+  if (!dragging) return;
+  dragging = false;
+  divider.classList.remove('dragging');
+  document.body.classList.remove('resizing');
+  lsSet('mdeditor-split', splitPct.toFixed(1));
+}
+divider.addEventListener('pointerup', endDrag);
+divider.addEventListener('pointercancel', endDrag);
+divider.addEventListener('dblclick', () => { splitPct = 50; applySplit(); lsSet('mdeditor-split', '50'); });
+divider.addEventListener('keydown', e => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  e.preventDefault();
+  splitPct = clampPct(splitPct + (e.key === 'ArrowLeft' ? -2 : 2));
+  applySplit();
+  lsSet('mdeditor-split', splitPct.toFixed(1));
+});
+window.addEventListener('resize', () => {
+  applySplit();
+  if (ipIdx >= 0) { const img = currentImg(); if (img) positionImgPanel(img); }
+});
+
+// Харагдацыг тохируулах: 'split' | 'edit' | 'view'
+function setLayout(mode) {
+  layout = mode;
+  paneEditor.classList.toggle('is-hidden', mode === 'view');
+  panePreview.classList.toggle('is-hidden', mode === 'edit');
+  document.getElementById('seg-edit').classList.toggle('active', mode === 'edit');
+  document.getElementById('seg-split').classList.toggle('active', mode === 'split');
+  document.getElementById('seg-view').classList.toggle('active', mode === 'view');
+  if (mode === 'edit') closeImgPanel();
+  applySplit();
+}
+
+// ===== Бичих хэрэгслүүд =====
+function insertAtCursor(text) {
+  const s = input.selectionStart, e = input.selectionEnd;
+  input.setRangeText(text, s, e, 'end');
+  input.focus(); changed();
+}
+
+function insImageFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const alt = file.name.replace(/\.[^.]+$/, '').replace(/[|\]]/g, ' ');
+    placeImage(e.target.result, alt).then(ref => {
+      insertAtCursor('\n![' + alt + '](' + ref + ')\n');
+    });
+  };
+  reader.readAsDataURL(file);
+  event.target.value = '';
+}
+
+input.addEventListener('paste', (ev) => {
+  const items = ev.clipboardData && ev.clipboardData.items;
+  if (!items) return;
+  for (const it of items) {
+    if (it.type && it.type.indexOf('image') === 0) {
+      ev.preventDefault();
+      const file = it.getAsFile();
+      const reader = new FileReader();
+      const stamp = new Date().toISOString().replace(/\D/g, '').slice(0, 14);
+      reader.onload = e => placeImage(e.target.result, 'image-' + stamp).then(ref => insertAtCursor('\n![зураг](' + ref + ')\n'));
+      reader.readAsDataURL(file);
+      return;
+    }
+  }
+});
+
+// Зургийн товч: Drive дээрх файл бол хаанаас оруулахыг асууна
+async function insImage() {
+  if (!driveId) { document.getElementById('img-input').click(); return; }
+  const c = await showModal({
+    icon: 'ti-photo',
+    title: 'Зураг оруулах',
+    text: 'Компьютерээс сонгосон зураг «' + currentName() + '» файлын хавтсанд хадгалагдаж, нэрээр нь холбогдоно.',
+    buttons: [
+      { label: 'Цуцлах', value: 'cancel' },
+      { label: 'Компьютерээс', value: 'local', icon: 'ti-device-desktop' },
+      { label: 'Drive хавтаснаас', value: 'drive', cls: 'mbtn-main', icon: 'ti-brand-google-drive' }
+    ]
+  });
+  if (c === 'local') document.getElementById('img-input').click();
+  else if (c === 'drive') pickDriveImage();
+}
+
+async function pickDriveImage() {
+  let res;
+  setBusy(true);
+  try { res = await gs('listImages', driveId); }
+  catch (e) { setBusy(false); await showError('Зургийн жагсаалт авч чадсангүй', e); return; }
+  setBusy(false);
+  if (!res.items.length) {
+    await showError('Зураг олдсонгүй', '«' + res.folder + '» хавтсанд зураг алга. Зургаа тэр хавтсанд хуулаад дахин оролдоно уу.');
+    return;
+  }
+  const v = await showModal({
+    icon: 'ti-brand-google-drive',
+    title: 'Drive-аас зураг сонгох',
+    text: '«' + res.folder + '» хавтас · ' + res.items.length + ' зураг',
+    list: res.items.map(it => ({ label: it.name, value: it })),
+    buttons: [{ label: 'Цуцлах', value: 'cancel' }]
+  });
+  if (!v || v === 'cancel') return;
+  // Хоосон зай, хаалт агуулсан нэрийг markdown-д ID-аар нь холбоно
+  const ref = /^[^\s()]+$/.test(v.name) ? v.name : 'drive:' + v.id;
+  const alt = v.name.replace(/\.[^.]+$/, '').replace(/[|\]]/g, ' ');
+  insertAtCursor('\n![' + alt + '](' + ref + ')\n');
+}
+
+function fmt(before, after) {
+  const s = input.selectionStart, e = input.selectionEnd;
+  const sel = input.value.slice(s, e) || 'текст';
+  input.setRangeText(before + sel + after, s, e, 'select');
+  input.focus(); changed();
+}
+
+function insLine(prefix) {
+  const s = input.selectionStart;
+  const val = input.value;
+  const lineStart = val.lastIndexOf('\n', s - 1) + 1;
+  const atStart = s === lineStart;
+  input.setRangeText((atStart ? '' : '\n') + prefix, s, s, 'end');
+  input.focus(); changed();
+}
+
+function insLink() {
+  const s = input.selectionStart, e = input.selectionEnd;
+  const sel = input.value.slice(s, e) || 'холбоос';
+  input.setRangeText('[' + sel + '](https://)', s, e, 'end');
+  input.focus(); changed();
+}
+
+function insDisplayMath() {
+  const s = input.selectionStart;
+  const block = '\n$$\n\n$$\n';
+  input.setRangeText(block, s, s, 'end');
+  const pos = s + 4;
+  input.setSelectionRange(pos, pos);
+  input.focus(); changed();
+}
+
+// ===== Асуух цонх =====
+// input өгвөл текст оруулах талбартай; тэгвэл { value, text } буцаана.
+function showModal({ icon = 'ti-alert-triangle', title, text, buttons, input: inputValue, placeholder, list }) {
+  return new Promise(resolve => {
+    const back = document.getElementById('modal');
+    const acts = document.getElementById('modal-actions');
+    document.getElementById('modal-icon').innerHTML = '<i class="ti ' + icon + '"></i>';
+    document.getElementById('modal-title').textContent = title;
+    document.getElementById('modal-text').textContent = text;
+    acts.innerHTML = '';
+    const prevFocus = document.activeElement;
+
+    let field = null;
+    if (inputValue != null) {
+      field = document.createElement('input');
+      field.type = 'text';
+      field.className = 'modal-input';
+      field.value = inputValue;
+      field.placeholder = placeholder || '';
+      field.autocomplete = 'off';
+      field.spellcheck = false;
+      acts.parentNode.insertBefore(field, acts);
+    }
+
+    let listEl = null;
+    if (list) {
+      listEl = document.createElement('div');
+      listEl.className = 'modal-list';
+      list.forEach(it => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'modal-item';
+        b.innerHTML = '<i class="ti ti-photo"></i><span></span>';
+        b.querySelector('span').textContent = it.label;
+        b.title = it.label;
+        b.onclick = () => done(it.value);
+        listEl.appendChild(b);
+      });
+      acts.parentNode.insertBefore(listEl, acts);
+    }
+
+    function done(v) {
+      const txt = field ? field.value : null;
+      if (field) field.remove();
+      if (listEl) listEl.remove();
+      back.hidden = true;
+      document.removeEventListener('keydown', onKey, true);
+      if (prevFocus && prevFocus.focus) prevFocus.focus();
+      resolve(field ? { value: v, text: txt } : v);
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done('cancel'); }
+      else if (e.key === 'Enter' && field && e.target === field) {
+        e.preventDefault();
+        const main = acts.querySelector('.mbtn-main');
+        if (main) main.click();
+      }
+    }
+    buttons.forEach(b => {
+      const el = document.createElement('button');
+      el.className = 'mbtn ' + (b.cls || '');
+      el.innerHTML = (b.icon ? '<i class="ti ' + b.icon + '"></i>' : '') + '<span></span>';
+      el.querySelector('span').textContent = b.label;
+      el.onclick = () => done(b.value);
+      acts.appendChild(el);
+    });
+    back.onclick = e => { if (e.target === back) done('cancel'); };
+    document.addEventListener('keydown', onKey, true);
+    back.hidden = false;
+    if (field) { field.focus(); field.select(); }
+    else if (listEl && listEl.firstChild) listEl.firstChild.focus();
+    else (acts.querySelector('.mbtn-main') || acts.firstChild).focus();
+  });
+}
+
+// ===== Хадгалах (Google Drive) =====
+function currentName() {
+  return normName(document.getElementById('filename').textContent);
+}
+
+// Амжилттай хадгалсан бол true буцаана
+async function saveFile(force) {
+  if (busy) return false;
+  if (!driveId) return saveFileAs();
+  const snapshot = input.value;
+  const content = expandImages(snapshot);
+  setBusy(true);
+  try {
+    const r = await gs('saveContent', driveId, content, force === true ? 0 : driveTs);
+    if (r.conflict) {
+      setBusy(false);
+      const c = await showModal({
+        title: 'Файл өөрчлөгдсөн байна',
+        text: '«' + r.name + '» файлыг таныг нээснээс хойш өөр хүн (эсвэл өөр цонх) засварласан байна. Дарж бичвэл тэр засвар устна.',
+        buttons: [
+          { label: 'Цуцлах', value: 'cancel' },
+          { label: 'Өөр нэрээр', value: 'saveas', icon: 'ti-file-plus' },
+          { label: 'Дарж бичих', value: 'force', cls: 'mbtn-danger' }
+        ]
+      });
+      if (c === 'force') return saveFile(true);
+      if (c === 'saveas') return saveFileAs();
+      return false;
+    }
+    driveTs = r.ts;
+    setFileName(r.name);
+    setDirty(input.value !== snapshot);   // хадгалж байх хооронд бичсэн бол dirty хэвээр
+    return true;
+  } catch (e) {
+    await showError('Хадгалж чадсангүй', e);
+    return false;
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function saveFileAs() {
+  if (busy) return false;
+  const where = driveId ? 'Одоогийн файлын хавтсанд'
+              : driveFolderId ? 'Drive-д сонгосон хавтсанд'
+              : 'My Drive-д';
+  const r = await showModal({
+    icon: 'ti-file-plus',
+    title: 'Шинэ файлаар хадгалах',
+    text: where + ' шинэ файл үүснэ. Файлын нэр:',
+    input: currentName(),
+    buttons: [
+      { label: 'Цуцлах', value: 'cancel' },
+      { label: 'Компьютерт татах', value: 'download', icon: 'ti-download' },
+      { label: 'Drive-д хадгалах', value: 'drive', cls: 'mbtn-main', icon: 'ti-brand-google-drive' }
+    ]
+  });
+  if (r.value === 'cancel') return false;
+
+  const name = normName(r.text);
+  const snapshot = input.value;
+  const content = expandImages(snapshot);
+
+  if (r.value === 'download') {
+    downloadFallback(content, name);
+    return true;
+  }
+
+  setBusy(true);
+  try {
+    const f = await gs('createContent', name, content, driveId || '', driveId ? '' : driveFolderId);
+    driveId = f.id;
+    driveTs = f.ts;
+    retryMissingImages();
+    setFileName(f.name);
+    setDirty(input.value !== snapshot);
+    rememberUrl();
+    return true;
+  } catch (e) {
+    await showError('Хадгалж чадсангүй', e);
+    return false;
+  } finally {
+    setBusy(false);
+  }
+}
+
+function downloadFallback(content, name) {
+  const blob = new Blob([content], { type: 'text/markdown' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// ===== PDF / Хэвлэх =====
+// Хөтчийн өөрийн толгой/хөлийг (огноо, URL) гаргахгүйн тулд @page margin-ийг 0 болгож,
+// хуудасны зайг body padding (хажуу) болон давтагдах thead/tfoot (дээд, доод)-оор үүсгэнэ.
+const printCSS = `
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0 18mm; font-family: 'Source Serif 4', Georgia, serif; font-size: 12pt; line-height: 1.7; color: #14213d; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  h1 { font-family: 'Manrope', system-ui, sans-serif; font-size: 21pt; font-weight: 800; color: #16285a; margin: 0 0 14px; padding-bottom: 10px;
+       background: linear-gradient(90deg, #2f5bea 0 20%, #7b5cf0 20% 40%, #0f9d8a 40% 60%, #d8386b 60% 80%, #e3931b 80% 100%) left bottom / 100% 3px no-repeat; }
+  h2 { font-family: 'Manrope', system-ui, sans-serif; font-size: 15pt; font-weight: 700; margin: 20px 0 9px; color: #2248c9; }
+  h3 { font-family: 'Manrope', system-ui, sans-serif; font-size: 12.5pt; font-weight: 700; margin: 15px 0 7px; color: #0b7d6e; }
+  h1, h2, hr { clear: both; }
+  p { margin: 0 0 11px; }
+  ul, ol { margin: 0 0 11px; padding-left: 22px; }
+  li { margin: 4px 0; }
+  ul li::marker { color: #0f9d8a; }
+  ol li::marker { color: #7b5cf0; font-weight: 700; }
+  code { font-family: 'JetBrains Mono', monospace; font-size: 10.5pt; background: #fde6ee; color: #b8214f; padding: 1px 5px; border-radius: 5px; }
+  pre { display: block; width: fit-content; min-width: 50mm; max-width: 100%; background: #f6f8fd; border: 1px solid #dde4f2; border-radius: 8px; padding: 6px 12px; overflow-x: auto; margin: 0 0 12px; line-height: 1.4; page-break-inside: avoid; }
+  pre code { display: block; background: none; color: #14213d; padding: 0; font-size: 10.5pt; line-height: inherit; }
+  table { border-collapse: separate; border-spacing: 0; width: 100%; margin: 0 0 12px; font-family: 'Manrope', system-ui, sans-serif; font-size: 11pt; border: 1px solid #dde4f2; border-radius: 8px; overflow: hidden; page-break-inside: avoid; }
+  th, td { padding: 7px 11px; border-bottom: 1px solid #dde4f2; }
+  th { background: #2f5bea; color: #fff; font-weight: 700; }
+  tr:last-child td { border-bottom: none; }
+  tr:nth-child(even) td { background: #e6edff; }
+  blockquote { border-left: 4px solid #e3931b; background: #fdf0d8; margin: 0 0 12px; padding: 2px 10px; border-radius: 0 5px 5px 0; color: #4a5878; font-style: italic; line-height: 1.5; }
+  blockquote p { margin: 0 0 3px; }
+  blockquote > :last-child { margin-bottom: 0; }
+  hr { border: none; height: 3px; margin: 18px 0;
+       background: linear-gradient(90deg, #2f5bea 0 20%, #7b5cf0 20% 40%, #0f9d8a 40% 60%, #d8386b 60% 80%, #e3931b 80% 100%); }
+  a { color: #2248c9; }
+  strong { font-weight: 700; }
+  em { color: #5d3fd6; }
+  img { display: block; max-width: 100%; height: auto; margin: 4px 0 12px; border-radius: 6px; page-break-inside: avoid; outline: none !important; }
+  img.img-left   { float: left;  margin: 4px 16px 8px 0; }
+  img.img-right  { float: right; margin: 4px 0 8px 16px; }
+  img.img-center { margin-left: auto; margin-right: auto; }
+  .katex-display { overflow-x: auto; margin: 10px 0; }
+  .hljs-keyword, .hljs-selector-tag { color: #5d3fd6; font-weight: 600; }
+  .hljs-type, .hljs-built_in, .hljs-title.class_ { color: #0b7d6e; }
+  .hljs-title.function_, .hljs-title { color: #2248c9; }
+  .hljs-string, .hljs-char { color: #a96200; }
+  .hljs-number, .hljs-literal { color: #b8214f; }
+  .hljs-meta, .hljs-meta .hljs-keyword { color: #b8214f; font-weight: 400; }
+  .hljs-meta .hljs-string { color: #a96200; }
+  .hljs-comment, .hljs-doctag { color: #8d9ab5; font-style: italic; }
+  .hljs-operator, .hljs-punctuation { color: #4a5878; }
+  table.page-wrap { width: 100%; border: none; border-radius: 0; overflow: visible; margin: 0; page-break-inside: auto; font-family: inherit; font-size: inherit; }
+  table.page-wrap > thead > tr > td, table.page-wrap > tbody > tr > td, table.page-wrap > tfoot > tr > td { padding: 0; border: none; background: none; }
+  .pg-space { height: 18mm; }
+  .page-head { display: flex; justify-content: space-between; gap: 12px; font-family: 'Manrope', system-ui, sans-serif; font-size: 9pt; color: #4a5878; padding-bottom: 6px; margin-bottom: 16px;
+       background: linear-gradient(90deg, #2f5bea 0 20%, #7b5cf0 20% 40%, #0f9d8a 40% 60%, #d8386b 60% 80%, #e3931b 80% 100%) left bottom / 100% 2px no-repeat; }
+  .page-head b { color: #16285a; font-weight: 800; }
+`;
+
+function savePDF() {
+  closeImgPanel();
+  const title = (document.getElementById('filename').textContent || 'document').replace(/\.(md|markdown|txt)$/i, '') || 'document';
+  const frame = document.createElement('iframe');
+  frame.setAttribute('aria-hidden', 'true');
+  frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;';
+  document.body.appendChild(frame);
+
+  // Харах цонхны толгой/хөлийг хасаад, PDF-д хуудас бүрт давтагдах хэлбэрээр дахин үүсгэнэ
+  const clone = preview.cloneNode(true);
+  clone.querySelectorAll('.doc-head, .doc-foot').forEach(el => el.remove());
+  const head = headerHTML('page-head');
+
+  // Хуудасны дугаар: @page margin box (Chrome/Edge 131+)
+  const foot = footerMode();
+  const pageCSS = foot
+    ? '@page { margin: 0 0 14mm; @bottom-center { content: ' +
+        (foot === 'pages' ? 'counter(page) " / " counter(pages)' : 'counter(page)') +
+        '; font-family: Manrope, sans-serif; font-size: 9pt; color: #4a5878; } }'
+    : '@page { margin: 0; }';
+
+  const bodyHTML =
+    '<table class="page-wrap">' +
+      '<thead><tr><td><div class="pg-space"></div>' + head + '</td></tr></thead>' +
+      '<tfoot><tr><td><div class="pg-space" style="height:' + (foot ? '4mm' : '18mm') + '"></div></td></tr></tfoot>' +
+      '<tbody><tr><td>' + clone.innerHTML + '</td></tr></tbody>' +
+    '</table>';
+
+  const doc = frame.contentWindow.document;
+  doc.open();
+  doc.write(
+    '<!DOCTYPE html><html lang="mn"><head><meta charset="utf-8">' +
+    '<title>' + escHTML(title) + '</title>' +
+    '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">' +
+    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>' +
+    '<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">' +
+    '<style>' + pageCSS + printCSS + '</style></head><body>' + bodyHTML + '</body></html>'
+  );
+  doc.close();
+
+  const run = () => {
+    const go = () => { frame.contentWindow.focus(); frame.contentWindow.print(); setTimeout(() => frame.remove(), 1500); };
+    if (frame.contentWindow.document.fonts && frame.contentWindow.document.fonts.ready) {
+      frame.contentWindow.document.fonts.ready.then(() => setTimeout(go, 200));
+    } else {
+      setTimeout(go, 500);
+    }
+  };
+
+  if (frame.contentWindow.document.readyState === 'complete') run();
+  else frame.onload = run;
+}
+
+// ===== Файл нээх =====
+function loadText(name, text) {
+  setFileName(name);
+  closeImgPanel();
+  input.value = stashImages(text);
+  render();
+  setDirty(false);
+  input.scrollTop = 0;
+  preview.scrollTop = 0;
+}
+
+async function openDrive(id) {
+  setBusy(true);
+  try {
+    const f = await gs('loadContent', id);
+    resetDriveImages();
+    driveId = f.id;
+    driveTs = f.ts;
+    loadText(f.name, f.text);
+    rememberUrl();
+    return true;
+  } catch (e) {
+    await showError('Файл нээж чадсангүй', e);
+    return false;
+  } finally {
+    setBusy(false);
+  }
+}
+
+// Засвар орсон бол эхлээд хадгалах эсэхийг асууна
+async function openFile() {
+  if (busy) return;
+  if (dirty) {
+    const c = await showModal({
+      title: 'Хадгалаагүй өөрчлөлт байна',
+      text: '«' + currentName() + '» файлд хадгалаагүй засвар орсон байна. Өөр файл нээхээс өмнө хадгалах уу?',
+      buttons: [
+        { label: 'Цуцлах', value: 'cancel' },
+        { label: 'Хадгалахгүй', value: 'discard', cls: 'mbtn-danger' },
+        { label: 'Хадгалах', value: 'save', cls: 'mbtn-main', icon: 'ti-download' }
+      ]
+    });
+    if (c === 'cancel') return;
+    if (c === 'save' && !(await saveFile())) return;
+  }
+
+  const r = await showModal({
+    icon: 'ti-folder-open',
+    title: 'Файл нээх',
+    text: 'Google Drive дахь файлын линк эсвэл ID-г оруулна уу. Эсвэл компьютерээсээ сонгоно.',
+    input: '',
+    placeholder: 'https://drive.google.com/file/d/…',
+    buttons: [
+      { label: 'Цуцлах', value: 'cancel' },
+      { label: 'Компьютерээс', value: 'local', icon: 'ti-device-desktop' },
+      { label: 'Drive-аас нээх', value: 'drive', cls: 'mbtn-main', icon: 'ti-brand-google-drive' }
+    ]
+  });
+  if (r.value === 'local') { document.getElementById('file-open-input').click(); return; }
+  if (r.value !== 'drive') return;
+
+  const id = parseDriveId(r.text);
+  if (!id) {
+    await showError('Линк танигдсангүй', 'Google Drive-ийн файлын линк эсвэл ID оруулна уу.');
+    return;
+  }
+  await openDrive(id);
+}
+
+// Компьютерээс нээсэн файл Drive-тай холбоогүй — хадгалахад шинэ Drive файл үүснэ
+function loadFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    driveId = '';
+    driveTs = 0;
+    resetDriveImages();
+    updateFileIcon();
+    loadText(file.name, String(e.target.result).replace(/^\uFEFF/, ''));
+  };
+  reader.readAsText(file);
+  event.target.value = '';
+}
+
+// Хуудсыг хаах/сэргээх үед хадгалаагүй бол анхааруулна
+window.addEventListener('beforeunload', e => {
+  if (dirty) { e.preventDefault(); e.returnValue = ''; }
+});
+
+// Товчлол: Ctrl+S — хадгалах, Esc — зургийн самбар хаах
+document.addEventListener('keydown', (e) => {
+  if (!document.getElementById('modal').hidden) return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    saveFile();
+  } else if (e.key === 'Escape' && ipIdx >= 0) {
+    closeImgPanel();
+  }
+});
+
+// ===== Эхлүүлэх =====
+applySplit();
+if (driveId) {
+  input.value = '';
+  input.placeholder = 'Drive-аас ачаалж байна…';
+  render();
+  setDirty(false);
+  openDrive(driveId).then(ok => {
+    input.placeholder = 'Тэмдэглэгээгээ энд бичнэ үү...';
+    if (!ok) { driveId = ''; updateFileIcon(); }
+  });
+} else {
+  input.value = defaultMd;
+  render();
+  setDirty(false);
+  updateFileIcon();
+}
+</script>
