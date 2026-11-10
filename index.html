@@ -227,8 +227,13 @@ body { transition: background-color .2s, color .2s; }
 .tgroup.g-math button { font-size: 16px; }
 .tgroup.g-page button { font-size: 16px; }
 .tgroup.g-page button.active { background: var(--c); color: #fff; }
+.tgroup.g-file { --c-soft: var(--surface2); border: 1px solid var(--border); }
+.tgroup.g-file button { gap: 6px; font-size: 13px; }
+.tgroup.g-file button i { font-size: 16px; }
+.tgroup.g-file button.main { background: var(--c); color: #fff; }
+.tgroup.g-file button.main:hover { background: var(--c-ink); }
 
-.toolbar button:focus-visible { outline: 2px solid var(--c, var(--blue)); outline-offset: 2px; }
+.toolbar button:focus-visible, .tgroup button:focus-visible { outline: 2px solid var(--c, var(--blue)); outline-offset: 2px; }
 .toolbar .spacer { flex: 1; min-width: 8px; }
 
 .viewseg {
@@ -313,6 +318,9 @@ body.resizing .pane { pointer-events: none; }
   flex-shrink: 0;
 }
 .pane-header .ph-label { display: flex; align-items: center; gap: 8px; }
+.pane-header .ph-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; flex: 1; min-width: 0; }
+.ph-tools .tgroup.g-math { --c-soft: var(--surface); }
+#pane-editor .pane-header { flex-wrap: wrap; }
 .pane-header .ph-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 
 .ph-btn {
@@ -340,6 +348,19 @@ body.resizing .pane { pointer-events: none; }
 .ph-btn-close { padding: 6px 8px; background: transparent; color: var(--ink3); }
 .ph-btn-close:hover { background: var(--c); color: #fff; }
 .ph-btn-close i { font-size: 16px; }
+.win-btns { display: inline-flex; align-items: center; gap: 6px; }
+.win-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0;
+  border: none; border-radius: 50%;
+  background: var(--surface2); color: var(--ink3);
+  cursor: pointer; transition: background .14s, color .14s;
+}
+.win-btn i { font-size: 14px; }
+.win-btn:hover { background: var(--border2); color: var(--ink); }
+.win-btn.win-close:hover { background: #e5484d; color: #fff; }
+.win-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.win-btn:disabled { opacity: .45; cursor: default; }
 
 textarea {
   flex: 1;
@@ -691,38 +712,12 @@ textarea::selection { background: #ffc94d; color: #14213d; }
 </div>
 
 <div class="toolbar">
-  <div class="tgroup g-text" role="group" aria-label="Текст">
-    <button onclick="fmt('**','**')" title="Тод"><b>Т</b></button>
-    <button onclick="fmt('_','_')" title="Налуу"><i>Н</i></button>
-    <button onclick="fmt('~~','~~')" title="Дундуур зураас" style="text-decoration:line-through;">З</button>
-    <button onclick="fmt('`','`')" title="Код" style="font-family:var(--font-mono);">&lt;/&gt;</button>
-  </div>
-  <div class="tgroup g-head" role="group" aria-label="Гарчиг">
-    <button onclick="insLine('# ')" title="Гарчиг 1">H1</button>
-    <button onclick="insLine('## ')" title="Гарчиг 2">H2</button>
-    <button onclick="insLine('### ')" title="Гарчиг 3">H3</button>
-  </div>
-  <div class="tgroup g-block" role="group" aria-label="Блок">
-    <button onclick="insLine('- ')" title="Жагсаалт"><i class="ti ti-list"></i></button>
-    <button onclick="insLine('1. ')" title="Дугаарлагдсан жагсаалт"><i class="ti ti-list-numbers"></i></button>
-    <button onclick="insLine('> ')" title="Иш татах"><i class="ti ti-blockquote"></i></button>
-    <button onclick="insLine('---\n')" title="Хөндлөн зураас"><i class="ti ti-minus"></i></button>
-    <button onclick="clearFormat()" title="Normal"><i class="ti ti-clear-formatting"></i></button>
-  </div>
-  <div class="tgroup g-insert" role="group" aria-label="Оруулах">
-    <button onclick="insLink()" title="Холбоос"><i class="ti ti-link"></i></button>
-    <button onclick="insImage()" title="Зураг оруулах (компьютерээс)"><i class="ti ti-photo"></i></button>
-    <input type="file" id="img-input" accept="image/*" onchange="insImageFile(event)" style="display:none;">
-    <button onclick="insCols()" title="Багана болгох"><i class="ti ti-columns-2"></i></button>
-    <button onclick="insTable()" title="Хүснэгт)"><i class="ti ti-table"></i></button>
-  </div>
-  <div class="tgroup g-math" role="group" aria-label="Томъёо">
-    <button onclick="fmt('$','$')" title="Хялбар томъёо">∑</button>
-    <button onclick="insDisplayMath()" title="Дэлгэрэнгүй томъёо">∫∫</button>
-  </div>
-  <div class="tgroup g-page" role="group" aria-label="Хуудас">
-    <button id="head-btn" onclick="insHeader()" title="Header"><i class="ti ti-layout-navbar"></i></button>
-    <button id="foot-btn" onclick="insFooter()" title="Footer"><i class="ti ti-layout-bottombar"></i></button>
+  <div class="tgroup g-file" role="group" aria-label="Файл">
+    <button onclick="newPage()" title="Шинэ хуудас нээх (шинэ табд)"><i class="ti ti-file-plus"></i></button>
+    <button onclick="openFile()" title="Файл нээх"><i class="ti ti-upload"></i></button>
+    <input type="file" id="file-open-input" accept=".md,.markdown,.txt" onchange="loadFile(event)" style="display:none;">
+    <button class="main" onclick="saveFile()" title="Хадгалах (Ctrl+S)"><i class="ti ti-download"></i></button>
+    <button onclick="saveFileAs()" title="Өөр нэрээр хадгалах"><i class="ti ti-file-export"></i></button>
   </div>
   <div class="spacer"></div>
   <div class="viewseg" role="group" aria-label="Гүйлгэлт">
@@ -738,13 +733,44 @@ textarea::selection { background: #ffc94d; color: #14213d; }
 <div class="editor-area" id="editor-area">
   <div class="pane" id="pane-editor">
     <div class="pane-header">
-      <span class="ph-label"><i class="ti ti-pencil"></i> Засварлах цонх</span>
+      <span class="ph-label" title="Засварлах цонх"><i class="ti ti-pencil"></i></span>
+      <div class="ph-tools">
+      <div class="tgroup g-text" role="group" aria-label="Текст">
+        <button onclick="clearFormat()" title="Normal">N</button>
+        <button onclick="fmt('**','**')" title="Bold"><b>B</b></button>
+        <button onclick="fmt('_','_')" title="Italic"><i>I</i></button>
+        <button onclick="fmt('~~','~~')" title="Strikethrough" style="text-decoration:line-through;">З</button>
+        <button onclick="fmt('`','`')" title="Code" style="font-family:var(--font-mono);">&lt;/&gt;</button>
+      </div>
+      <div class="tgroup g-head" role="group" aria-label="Гарчиг">
+        <button onclick="insLine('# ')" title="Гарчиг 1">H1</button>
+        <button onclick="insLine('## ')" title="Гарчиг 2">H2</button>
+        <button onclick="insLine('### ')" title="Гарчиг 3">H3</button>
+      </div>
+      <div class="tgroup g-block" role="group" aria-label="Блок">
+        <button onclick="insLine('- ')" title="Жагсаалт"><i class="ti ti-list"></i></button>
+        <button onclick="insLine('1. ')" title="Дугаарлагдсан жагсаалт"><i class="ti ti-list-numbers"></i></button>
+        <button onclick="insLine('> ')" title="Иш татах"><i class="ti ti-blockquote"></i></button>
+        <button onclick="insLine('---\n')" title="Хөндлөн зураас"><i class="ti ti-minus"></i></button>
+      </div>
+      <div class="tgroup g-insert" role="group" aria-label="Оруулах">
+        <button onclick="insLink()" title="Холбоос"><i class="ti ti-link"></i></button>
+        <button onclick="insImage()" title="Зураг оруулах (компьютерээс)"><i class="ti ti-photo"></i></button>
+        <input type="file" id="img-input" accept="image/*" onchange="insImageFile(event)" style="display:none;">
+        <button onclick="insCols()" title="Багана болгох"><i class="ti ti-columns-2"></i></button>
+        <button onclick="insTable()" title="Хүснэгт)"><i class="ti ti-table"></i></button>
+      </div>
+      <div class="tgroup g-math" role="group" aria-label="Томъёо">
+        <button onclick="fmt('$','$')" title="Хялбар томъёо">∑</button>
+        <button onclick="insDisplayMath()" title="Дэлгэрэнгүй томъёо">∫∫</button>
+      </div>
+      <div class="tgroup g-page" role="group" aria-label="Хуудас">
+        <button id="head-btn" onclick="insHeader()" title="Header"><i class="ti ti-layout-navbar"></i></button>
+        <button id="foot-btn" onclick="insFooter()" title="Footer"><i class="ti ti-layout-bottombar"></i></button>
+      </div>
+      </div>
       <span class="ph-actions">
-        <button class="ph-btn" onclick="openFile()" title="Файл нээх"><i class="ti ti-upload"></i> Нээх</button>
-        <input type="file" id="file-open-input" accept=".md,.markdown,.txt" onchange="loadFile(event)" style="display:none;">
-        <button class="ph-btn ph-btn-main" onclick="saveFile()" title="Хадгалах (Ctrl+S)"><i class="ti ti-download"></i> Хадгалах</button>
-        <button class="ph-btn" onclick="saveFileAs()" title="Өөр нэрээр хадгалах"><i class="ti ti-file-plus"></i></button>
-        <button class="ph-btn ph-btn-close" onclick="closeDoc()" title="Хаах"><i class="ti ti-x"></i></button>
+        <span class="win-btns"><button class="win-btn" onclick="paneMin('edit')" title="Нуух"><i class="ti ti-minus"></i></button><button class="win-btn" id="max-edit" onclick="paneMax('edit')" title="Томруулах"><i class="ti ti-square"></i></button><button class="win-btn win-close" onclick="closeDoc()" title="Хаах"><i class="ti ti-x"></i></button></span>
       </span>
     </div>
     <textarea id="md-input" spellcheck="false" placeholder="Markdown текст бичнэ үү $a^2$..."></textarea>
@@ -758,7 +784,7 @@ textarea::selection { background: #ffc94d; color: #14213d; }
       <span class="ph-label"><i class="ti ti-eye"></i> Харах цонх</span>
       <span class="ph-actions">
         <button class="ph-btn ph-btn-pdf" onclick="savePDF()" title="PDF хэлбэрээр хадгалах"><i class="ti ti-file-type-pdf"></i> Хадгалах(PDF) / Хэвлэх</button>
-        <button class="ph-btn ph-btn-close" onclick="closePreview()" title="Хаах"><i class="ti ti-x"></i></button>
+        <span class="win-btns"><button class="win-btn" onclick="paneMin('view')" title="Нуух"><i class="ti ti-minus"></i></button><button class="win-btn" id="max-view" onclick="paneMax('view')" title="Томруулах"><i class="ti ti-square"></i></button><button class="win-btn win-close" onclick="closePreview()" title="Хаах"><i class="ti ti-x"></i></button></span>
       </span>
     </div>
     <div class="preview-scroll" id="md-preview"></div>
@@ -1468,8 +1494,18 @@ function setLayout(mode) {
   document.getElementById('seg-split').classList.toggle('active', mode === 'split');
   document.getElementById('seg-view').classList.toggle('active', mode === 'view');
   if (mode === 'edit') closeImgPanel();
+  ['edit', 'view'].forEach(w => {
+    const b = document.getElementById('max-' + w);
+    const max = mode === w;
+    b.innerHTML = max ? '<i class="ti ti-copy"></i>' : '<i class="ti ti-square"></i>';
+    b.title = max ? 'Буцаах' : 'Томруулах';
+  });
   applySplit();
 }
+
+// Цонхны товч: — нуух, □ томруулах / буцаах
+function paneMin(w) { setLayout(w === 'edit' ? 'view' : 'edit'); }
+function paneMax(w) { setLayout(layout === w ? 'split' : w); }
 
 // ===== Бичих хэрэгслүүд =====
 function insertAtCursor(text) {
@@ -1821,7 +1857,7 @@ function savePDF() {
     '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">' +
     '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>' +
     '<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">' +
-    '<style>' + pageCSS + printCSS + '</style></head><body>' + bodyHTML + '</body></html>'
+    '<style>' + pageCSS + printCSS + '</style></head><body>' + bodyHTML + '<\/body><\/html>'
   );
   doc.close();
   doc.title = title;
@@ -1848,6 +1884,14 @@ function loadText(name, text, handle) {
   setDirty(false);
   input.scrollTop = 0;
   preview.scrollTop = 0;
+}
+
+// Шинэ хуудас: хоосон засварлагчийг шинэ табд нээнэ (энэ таб хэвээр үлдэнэ)
+function newPage() {
+  const url = new URL(location.href);
+  url.searchParams.set('new', '1');
+  url.hash = '';
+  window.open(url.href, '_blank');
 }
 
 // Засвар орсон бол эхлээд хадгалах эсэхийг асууна
@@ -1890,12 +1934,12 @@ function loadFile(event) {
   event.target.value = '';
 }
 
-// Файл нээлттэй эсэх: хаагдсан үед зөвхөн «Нээх» идэвхтэй
+// Файл нээлттэй эсэх: хаагдсан үед зөвхөн «Шинэ», «Нээх» идэвхтэй
 let docOpen = true;
 function setDocOpen(v) {
   docOpen = v;
-  document.querySelectorAll('.toolbar .tgroup button, .ph-actions button:not([onclick="openFile()"])')
-    .forEach(b => { b.disabled = !v; });
+  document.querySelectorAll('.tgroup button, .ph-actions button')
+    .forEach(b => { if (!/^(openFile|newPage)\(\)$|^pane(Min|Max)\(/.test(b.getAttribute('onclick'))) b.disabled = !v; });
 }
 
 // Файлыг хаагаад хоосон баримтаар эхэлнэ (хадгалаагүй бол эхлээд асууна)
@@ -1941,7 +1985,7 @@ document.addEventListener('keydown', (e) => {
 
 // ===== Эхлүүлэх =====
 applySplit();
-input.value = defaultMd;
+input.value = new URLSearchParams(location.search).has('new') ? '' : defaultMd;
 render();
 setDirty(false);
 </script>
